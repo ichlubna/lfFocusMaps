@@ -1,0 +1,6 @@
+[submodule "src/libs/loadingBar"]
+	path = src/libs/loadingBar
+	url = https://github.com/ichlubna/loadingBar
+[submodule "src/libs/arguments"]
+	path = src/libs/arguments
+	url = https://github.com/ichlubna/arguments
