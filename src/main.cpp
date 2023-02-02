@@ -8,6 +8,7 @@ int main(int argc, char **argv)
     std::string coordinates = static_cast<std::string>(args["-c"]);
     std::string outputPath = static_cast<std::string>(args["-o"]);
     std::string method = static_cast<std::string>(args["-m"]);
+    int runs = std::stoi(static_cast<std::string>(args["-t"]));
 
     std::string helpText{ "Usage:\n"
                           "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
@@ -15,6 +16,7 @@ int main(int argc, char **argv)
                           "-c - camera position in normalized coordinates of the grid in format: x_y, e.g., 0.5_0.1\n"
                           "-o - output path\n"
                           "-m - method: BF - brute force\n"
+                          "-t - number of kernel runs for performance measurement - default is one\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;
@@ -24,11 +26,19 @@ int main(int argc, char **argv)
         std::cerr << "Missing required parameters. Use -h for help." << std::endl;
         return EXIT_FAILURE;
     }
+    
+    if(runs == 0)
+        runs = 1;
+    else if(runs < 0)
+    {
+        std::cerr << "Number of kernel runs cannot be negative. Use -h for help." << std::endl;
+        return EXIT_FAILURE;
+    }
 
     try
     {
         Interpolator interpolator(path);
-        interpolator.interpolate(outputPath, coordinates, method);
+        interpolator.interpolate(outputPath, coordinates, method, runs);
     }
     catch(const std::exception &e)
     {

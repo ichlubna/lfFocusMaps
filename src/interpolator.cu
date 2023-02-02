@@ -45,7 +45,7 @@ void Interpolator::init()
 {
     loadGPUData();
     loadGPUConstants();
-    sharedSize = sizeof(half)*colsRows.x*colsRows.y;
+    sharedSize = 0;//sizeof(half)*colsRows.x*colsRows.y;
 }
 
 int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
@@ -161,12 +161,9 @@ std::vector<float> Interpolator::generateWeights(glm::vec2 coords)
 
 void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
 {
-    cudaMalloc(reinterpret_cast<void **>(&weightsGPU), sizeof(half)*colsRows.x*colsRows.y);
-    std::vector<half> weights;
-    auto weightsFloat = generateWeights(viewCoordinates);
-    for(const auto & w : weightsFloat)
-            weights.push_back(static_cast<half>(w));
-    cudaMemcpy(weightsGPU, weights.data(), weights.size()*sizeof(half), cudaMemcpyHostToDevice);
+    cudaMalloc(reinterpret_cast<void **>(&weightsGPU), sizeof(float)*colsRows.x*colsRows.y);
+    auto weights = generateWeights(viewCoordinates);
+    cudaMemcpy(weightsGPU, weights.data(), weights.size()*sizeof(float), cudaMemcpyHostToDevice);
 }
 
 Interpolator::Method Interpolator::parseMethod(std::string method)
@@ -196,7 +193,41 @@ glm::vec2 Interpolator::parseCoordinates(std::string coordinates)
     return coords;
 }
 
-void Interpolator::interpolate(std::string outputPath, std::string coordinates, std::string method)
+void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
+{
+    constexpr int CLOSEST_FRAMES_COUNT{4};
+    
+    glm::ivec2 downCoords{glm::floor(viewCoordinates)};
+    glm::ivec2 upCoords{glm::ceil(viewCoordinates)};
+    
+    std::vector<float> closestFramesWeights(CLOSEST_FRAMES_COUNT);
+    std::vector<glm::ivec2> closestFramesCoords(CLOSEST_FRAMES_COUNT);
+    glm::vec2 unitPos{glm::fract(viewCoordinates)};
+
+    closestFramesCoords[Kernels::TOP_LEFT] = {downCoords};
+    closestFramesWeights[Kernels::TOP_LEFT] = (1 - unitPos.x) * (1 - unitPos.y);
+    
+    closestFramesCoords[Kernels::TOP_RIGHT] = {upCoords.x, downCoords.y};;
+    closestFramesWeights[Kernels::TOP_RIGHT] = unitPos.x * (1 - unitPos.y);
+    
+    closestFramesCoords[Kernels::BOTTOM_LEFT] = {downCoords.x, upCoords.y};
+    closestFramesWeights[Kernels::BOTTOM_LEFT] = (1 - unitPos.x) * unitPos.y;
+
+    closestFramesCoords[Kernels::BOTTOM_RIGHT] = {upCoords};
+    closestFramesWeights[Kernels::BOTTOM_RIGHT] = unitPos.x * unitPos.y;
+  
+    std::vector<int> closestFramesCoordsLinear;
+    for(auto const &coords : closestFramesCoords)
+       closestFramesCoordsLinear.push_back(coords.y*colsRows.x+coords.x); 
+  
+    cudaMalloc(reinterpret_cast<void **>(&closestFramesCoordsLinearGPU), sizeof(int)*closestFramesCoordsLinear.size());
+    cudaMemcpy(closestFramesCoordsLinearGPU, closestFramesCoordsLinear.data(), closestFramesCoordsLinear.size()*sizeof(int), cudaMemcpyHostToDevice);
+    
+    cudaMalloc(reinterpret_cast<void **>(&closestFramesWeightsGPU), sizeof(float)*closestFramesWeights.size());
+    cudaMemcpy(closestFramesWeightsGPU, closestFramesWeights.data(), closestFramesWeights.size()*sizeof(float), cudaMemcpyHostToDevice);
+}
+
+void Interpolator::interpolate(std::string outputPath, std::string coordinates, std::string method, int runs)
 {
     glm::vec2 coords = parseCoordinates(coordinates);
     loadGPUWeights(coords);
@@ -204,10 +235,17 @@ void Interpolator::interpolate(std::string outputPath, std::string coordinates, 
     dim3 dimBlock(16, 16, 1);
     dim3 dimGrid(resolution.x/dimBlock.x, resolution.y/dimBlock.y, 1);
 
-    Timer timer;
     std::cout << "Elapsed time: "<<std::endl;
-    Kernels::process<<<dimGrid, dimBlock, sharedSize>>>(reinterpret_cast<cudaTextureObject_t*>(textureObjectsArr), reinterpret_cast<cudaSurfaceObject_t*>(surfaceObjectsArr), reinterpret_cast<half*>(weightsGPU));
-    std::cout << timer.stop() << " ms" << std::endl;
+    float avgTime{0};
+    for(int i=0; i<runs; i++)
+    {
+        Timer timer;
+        Kernels::process<<<dimGrid, dimBlock, sharedSize>>>(reinterpret_cast<cudaTextureObject_t*>(textureObjectsArr), reinterpret_cast<cudaSurfaceObject_t*>(surfaceObjectsArr), weightsGPU, closestFramesWeightsGPU, closestFramesCoordsLinearGPU);
+        auto time = timer.stop();
+        avgTime += time;
+        std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
+    }
+    std::cout << "Average of " << runs << " runs: " << avgTime/runs << " ms" << std::endl;
 
     storeResults(outputPath);
 }

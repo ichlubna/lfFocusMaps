@@ -7,7 +7,7 @@ class Interpolator
     public:
     Interpolator(std::string inputPath);
     ~Interpolator();
-    void interpolate(std::string outputPath, std::string coordinates, std::string method);
+    void interpolate(std::string outputPath, std::string coordinates, std::string method, int runs);
 
     private:
     enum Method {BRUTE_FORCE};
@@ -18,7 +18,9 @@ class Interpolator
     void *textureObjectsArr;
     enum FileNames {FOCUS_MAP=0, RENDER_IMAGE=1};
     const std::vector<std::string> fileNames{"focusMap", "renderImage"};
-    int *weightsGPU;
+    float *weightsGPU;
+    float *closestFramesWeightsGPU;
+    int *closestFramesCoordsLinearGPU;
     size_t channels{4};
     size_t sharedSize{0};
     glm::ivec2 colsRows;
@@ -35,4 +37,5 @@ class Interpolator
     std::vector<float> generateWeights(glm::vec2 coords);
     std::pair<int, int*> createSurfaceObject(glm::ivec3 size, const uint8_t *data=nullptr);
     int createTextureObject(const uint8_t *data, glm::ivec3 size);
+    void prepareClosestFrames(glm::vec2 viewCoordinates);
 };

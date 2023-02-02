@@ -3,6 +3,7 @@
 
 namespace Kernels
 {
+    enum ClosestFrames{TOP_LEFT=0, TOP_RIGHT=1, BOTTOM_LEFT=2, BOTTOM_RIGHT=3};
     __device__ constexpr bool GUESS_HANDLES{false};
 
     __device__ constexpr int CHANNEL_COUNT{4};
@@ -13,14 +14,6 @@ namespace Kernels
     __device__ int gridSize(){return constants[4];}
     __device__ int focusMapID(){return constants[5];}
     __device__ int renderImageID(){return constants[6];}
-
-    __device__ constexpr int MAX_IMAGES{256};
-    __constant__ int2 offsets[MAX_IMAGES];
-    __device__ int2 focusCoords(int2 coords, int imageID)
-    {
-        auto offset = offsets[imageID];
-        return {coords.x+offset.x, coords.y+offset.y};
-    }
 
     extern __shared__ half localMemory[];
 
@@ -99,10 +92,38 @@ namespace Kernels
                     channels[j] = __fmaf_rn(value[j], weight, channels[j]);
             }
             
-            __device__ PixelArray<T> operator/= (const T &divisor)
+            __device__ PixelArray<T> operator/= (const T &value)
             {
                 for(int j=0; j<CHANNEL_COUNT; j++)
-                    this->channels[j] /= divisor;
+                    this->channels[j] /= value;
+                return *this;
+            }
+            
+            __device__ PixelArray<T> operator+= (const PixelArray<T> &value)
+            {
+                for(int j=0; j<CHANNEL_COUNT; j++)
+                    this->channels[j] += value.channels[j];
+                return *this;
+            }
+             
+            __device__ PixelArray<T> operator+ (const PixelArray &value)
+            {
+                for(int j=0; j<CHANNEL_COUNT; j++)
+                    this->channels[j] += value.channels[j];
+                return *this;
+            }
+            
+            __device__ PixelArray<T> operator-(const PixelArray &value)
+            {
+                for(int j=0; j<CHANNEL_COUNT; j++)
+                    this->channels[j] -= value.channels[j];
+                return *this;
+            }
+            
+            __device__ PixelArray<T> operator/(const T &value)
+            {
+                for(int j=0; j<CHANNEL_COUNT; j++)
+                    this->channels[j] /= value;
                 return *this;
             }
         };
@@ -193,6 +214,88 @@ namespace Kernels
             return PixelArray<T>{tex2D<uchar4>(textures[imageID], coords.x, coords.y)};
     }
     */
+    
+    template <typename T>
+    __device__ float pixelDistance(PixelArray<T> a, PixelArray<T> b)
+    {
+        return max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
+    }
+
+    template <typename T>
+    class OnlineVariance
+    {
+        private:
+        float n{0};
+        PixelArray<T> m;
+        float m2{0};
+        
+        public:
+        __device__ void add(PixelArray<T> val)
+        {
+           float distance = pixelDistance(m, val);
+           n++;
+           PixelArray<T> delta = val-m;
+           m += delta/static_cast<T>(n);
+           m2 += distance * pixelDistance(m, val);
+        }
+        __device__ float variance()
+        {
+            return m2/(n-1);    
+        }      
+        __device__ OnlineVariance& operator+=(const PixelArray<T>& rhs){
+
+          add(rhs);
+          return *this;
+        }
+    };
+
+    __device__ int2 focusCoords(int2 currentColRow, float2 viewColRow, int2 pxCoords, int focus)
+    {
+        float2 offset{(currentColRow.x-viewColRow.x)/colsRows().x, (currentColRow.y-viewColRow.y)/colsRows().y};
+        int2 coords{static_cast<int>(round(offset.x*focus))+pxCoords.x, static_cast<int>(round(offset.y*focus))+pxCoords.y};
+        return coords;
+    }
+
+    __device__ float evaluateFocusLevel(int2 coords, float2 viewColRow, int focus, cudaSurfaceObject_t *surfaces)
+    {
+        auto cr = colsRows();
+        OnlineVariance<float> variance;
+        int gridID = 0; 
+        for(int row=0; row<cr.y; row++) 
+        {     
+            gridID = row*cr.x;
+            for(int col=0; col<cr.x; col++) 
+            {
+                auto px{loadPx<float>(gridID, focusCoords({col, row}, viewColRow, coords, focus), surfaces)};
+                variance += px;
+                gridID++;
+            }
+        }
+        return variance.variance();
+    }
+
+    __device__ uchar4 renderFocusLevel(int2 coords, float2 viewColRow, int focus, cudaSurfaceObject_t *surfaces, float *weights)
+    {
+        auto cr = colsRows();
+        PixelArray<float> sum;
+        int gridID = 0; 
+        for(int row=0; row<cr.y; row++) 
+        {     
+            gridID = row*cr.x;
+            for(int col=0; col<cr.x; col++) 
+            {
+                auto px{loadPx<float>(gridID, focusCoords({col, row}, viewColRow, coords, focus), surfaces)};
+                sum.addWeighted(weights[gridID], px);
+                gridID++;
+            }
+        }
+        return sum.uch4();
+    }
+
+    __device__ void bruteForceScan()
+    {
+
+    }
 
     __device__ void storePx(uchar4 px, int imageID, int2 coords, cudaSurfaceObject_t *surfaces)
     {
@@ -202,27 +305,20 @@ namespace Kernels
             surf2Dwrite<uchar4>(px, surfaces[imageID+gridSize()], coords.x*sizeof(uchar4), coords.y);
     }
 
-    __global__ void process(cudaTextureObject_t *textures, cudaSurfaceObject_t *surfaces, half *weights)
+    __global__ void process(cudaTextureObject_t *textures, cudaSurfaceObject_t *surfaces, float *weights, float *closestWeights, int *closestCoords)
     {
         int2 coords = getImgCoords();
         if(coordsOutside(coords))
             return;
 
-        MemoryPartitioner<half> memoryPartitioner(localMemory);
-        auto localWeights = memoryPartitioner.array(gridSize());
-        loadWeightsSync<half>(weights, localWeights.data, gridSize()/2);  
-        Indexer weightMatIndex;
-        PixelArray<float> sum;
-        Indexer pxID;
-        pxID.linearCoordsBase({coords.x, coords.y}, imgRes().x);
-        for(int gridID = 0; gridID<gridSize(); gridID++)
-        {
-            auto px{loadPx<float>(gridID, focusCoords(coords, gridID), surfaces)};
-            sum.addWeighted(localWeights.ref(gridID), px);
-        }
+        //MemoryPartitioner<half> memoryPartitioner(localMemory);
+        //auto localWeights = memoryPartitioner.array(gridSize());
+        //loadWeightsSync<half>(weights, localWeights.data, gridSize()/2);
 
-        storePx(sum.uch4(), focusMapID(), coords, surfaces);
-        storePx(sum.uch4(), renderImageID(), coords, surfaces);
+        uchar4 color = renderFocusLevel(coords, {3.5,3.5}, 0, surfaces, weights);
+
+        storePx(color, focusMapID(), coords, surfaces);
+        storePx(color, renderImageID(), coords, surfaces);
     }
 
 }
