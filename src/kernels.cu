@@ -15,6 +15,8 @@ namespace Kernels
     __device__ int focusMapID(){return constants[5];}
     __device__ int renderImageID(){return constants[6];}
 
+    __device__ constexpr int MAX_IMAGES{256};
+    __constant__ float2 offsets[MAX_IMAGES];
     extern __shared__ half localMemory[];
 
     template <typename TT>
@@ -249,9 +251,10 @@ namespace Kernels
         }
     };
 
-    __device__ int2 focusCoords(int2 currentColRow, float2 viewColRow, int2 pxCoords, int focus)
+    __device__ int2 focusCoords(int gridID, int2 pxCoords, int focus)
     {
-        float2 offset{(currentColRow.x-viewColRow.x)/colsRows().x, (currentColRow.y-viewColRow.y)/colsRows().y};
+        //float2 offset{(currentColRow.x-viewColRow.x)/colsRows().x, (currentColRow.y-viewColRow.y)/colsRows().y};
+        float2 offset = offsets[gridID];
         int2 coords{static_cast<int>(round(offset.x*focus))+pxCoords.x, static_cast<int>(round(offset.y*focus))+pxCoords.y};
         return coords;
     }
@@ -266,14 +269,14 @@ namespace Kernels
             gridID = row*cr.x;
             for(int col=0; col<cr.x; col++) 
             {
-                auto px{loadPx<float>(gridID, focusCoords({col, row}, viewColRow, coords, focus), surfaces)};
+                auto px{loadPx<float>(gridID, focusCoords(gridID, coords, focus), surfaces)};
                 variance += px;
                 gridID++;
             }
         }
         return variance.variance();
     }
-
+    
     __device__ uchar4 renderFocusLevel(int2 coords, float2 viewColRow, int focus, cudaSurfaceObject_t *surfaces, float *weights)
     {
         auto cr = colsRows();
@@ -284,14 +287,14 @@ namespace Kernels
             gridID = row*cr.x;
             for(int col=0; col<cr.x; col++) 
             {
-                auto px{loadPx<float>(gridID, focusCoords({col, row}, viewColRow, coords, focus), surfaces)};
+                auto px{loadPx<float>(gridID, focusCoords(gridID, coords, focus), surfaces)};
                 sum.addWeighted(weights[gridID], px);
                 gridID++;
             }
         }
         return sum.uch4();
     }
-
+    
     __device__ void bruteForceScan()
     {
 

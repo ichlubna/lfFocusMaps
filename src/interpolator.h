@@ -27,6 +27,7 @@ class Interpolator
     glm::ivec3 resolution;
     std::string input;
     void init();
+    void loadGPUOffsets(glm::vec2 viewCoordinates);
     void loadGPUData();
     void loadGPUConstants();
     void loadGPUWeights(glm::vec2 viewCoordinates);

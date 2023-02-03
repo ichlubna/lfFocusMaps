@@ -142,6 +142,19 @@ void Interpolator::loadGPUConstants()
     cudaMemcpyToSymbol(Kernels::constants, values.data(), values.size() * sizeof(int));
 }
 
+void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
+{
+    std::vector<float2> offsets(colsRows.x*colsRows.y);
+    for(int col=0; col<colsRows.x; col++)
+        for(int row=0; row<colsRows.y; row++)
+        {
+            int gridID = row*colsRows.x + col; 
+            float2 offset{(col-viewCoordinates.x)/colsRows.x, (row-viewCoordinates.y)/colsRows.y};
+            offsets[gridID] = offset;
+        }
+    cudaMemcpyToSymbol(Kernels::offsets, offsets.data(), offsets.size() * sizeof(float2));
+}
+
 std::vector<float> Interpolator::generateWeights(glm::vec2 coords)
 {
     auto maxDistance = glm::distance(glm::vec2(0,0), glm::vec2(colsRows));
@@ -231,6 +244,7 @@ void Interpolator::interpolate(std::string outputPath, std::string coordinates, 
 {
     glm::vec2 coords = parseCoordinates(coordinates);
     loadGPUWeights(coords);
+    loadGPUOffsets(coords);   
     
     dim3 dimBlock(16, 16, 1);
     dim3 dimGrid(resolution.x/dimBlock.x, resolution.y/dimBlock.y, 1);
