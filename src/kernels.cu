@@ -272,7 +272,7 @@ namespace Kernels
 
     namespace FocusLevel
     {
-        __device__ float evaluate(int2 coords, int focus, cudaSurfaceObject_t *surfaces)
+        __device__ float evaluatePixel(int2 coords, int focus, cudaSurfaceObject_t *surfaces)
         {
             auto cr = colsRows();
             OnlineVariance<float> variance;
@@ -288,6 +288,42 @@ namespace Kernels
                 }
             }
             return variance.variance();
+        }
+        
+        __device__ float evaluateBlock(int2 coords, int focus, cudaSurfaceObject_t *surfaces)
+        {
+            constexpr int BLOCK_SIZE{5};
+            const int2 BLOCK_OFFSETS[]{ {0,0}, {-1,1}, {1,1}, {-1,-1}, {1,-1}};//, {0,0}, {0,1}, {0,-1}, {-1,0}, {1,0} };
+            auto cr = colsRows();
+            OnlineVariance<float> variance[BLOCK_SIZE];
+            int gridID = 0; 
+            for(int row=0; row<cr.y; row++) 
+            {     
+                gridID = row*cr.x;
+                for(int col=0; col<cr.x; col++) 
+                {
+                    for(int blockPx=0; blockPx<BLOCK_SIZE; blockPx++)
+                    {
+                        int2 inBlockCoords{coords.x+BLOCK_OFFSETS[blockPx].x, coords.y+BLOCK_OFFSETS[blockPx].y};
+                        auto px{Pixel::load<float>(gridID, focusCoords(gridID, inBlockCoords, focus), surfaces)};
+                        variance[blockPx] += px;
+                    }
+                    gridID++;
+                }
+            }
+            
+            float finalVariance{0};
+            for(int blockPx=0; blockPx<BLOCK_SIZE; blockPx++)
+                finalVariance += variance[blockPx].variance();
+            return finalVariance;
+        }
+        
+        __device__ float evaluate(int2 coords, int focus, cudaSurfaceObject_t *surfaces, bool blockSampling)
+        {
+            if(blockSampling)
+                return evaluateBlock(coords, focus, surfaces);
+            else
+                return evaluatePixel(coords, focus, surfaces);
         }
         
         __device__ uchar4 render(int2 coords, int focus, cudaSurfaceObject_t *surfaces, float *weights)
@@ -311,7 +347,7 @@ namespace Kernels
     
     namespace Focusing
     {
-        __device__ int bruteForce(int2 coords, int steps, int range, bool closestViews, cudaTextureObject_t *textures, cudaSurfaceObject_t *surfaces, int *closestCoords)
+        __device__ int bruteForce(int2 coords, int steps, int range, bool closestViews, bool blockSampling, cudaTextureObject_t *textures, cudaSurfaceObject_t *surfaces, int *closestCoords)
         {
             float stepSize{static_cast<float>(range)/steps};
             float focus{0.0f};
@@ -321,7 +357,7 @@ namespace Kernels
             for(int step=0; step<steps; step++)
             {
                 int pxFocus = round(focus);
-                float variance = FocusLevel::evaluate(coords, pxFocus, surfaces);
+                float variance = FocusLevel::evaluate(coords, pxFocus, surfaces, blockSampling);
                 if(variance < minVariance)
                 {
                    minVariance = variance;
@@ -333,7 +369,7 @@ namespace Kernels
         }
     }
 
-    __global__ void process(FocusMethod method, float methodParameter, bool closestViews, cudaTextureObject_t *textures, cudaSurfaceObject_t *surfaces, float *weights, float *closestWeights, int *closestCoords, int range)
+    __global__ void process(FocusMethod method, float methodParameter, bool closestViews, bool blockSampling, cudaTextureObject_t *textures, cudaSurfaceObject_t *surfaces, float *weights, float *closestWeights, int *closestCoords, int range)
     {
         int2 coords = getImgCoords();
         if(coordsOutside(coords))
@@ -351,7 +387,7 @@ namespace Kernels
             break;
 
             case BRUTE_FORCE:
-                focus = Focusing::bruteForce(coords, static_cast<int>(methodParameter), range, closestViews, textures, surfaces, closestCoords);
+                focus = Focusing::bruteForce(coords, static_cast<int>(methodParameter), range, closestViews, blockSampling, textures, surfaces, closestCoords);
             break;
 
             default:
@@ -359,8 +395,7 @@ namespace Kernels
         }        
         uchar4 color = FocusLevel::render(coords, focus, surfaces, weights);
         unsigned char focusColor = (static_cast<float>(focus)/range)*UCHAR_MAX;
-        Pixel::store(uchar4{focusColor, focusColor, focusColor, 255}, focusMapID(), coords, surfaces);
+        Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, focusMapID(), coords, surfaces);
         Pixel::store(color, renderImageID(), coords, surfaces);
     }
-
 }

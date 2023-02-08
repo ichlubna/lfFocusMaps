@@ -7,7 +7,7 @@ class Interpolator
     public:
     Interpolator(std::string inputPath);
     ~Interpolator();
-    void interpolate(std::string outputPath, std::string coordinates, std::string method, float methodParameter, bool closestViews, int inputRange, int runs);
+    void interpolate(std::string outputPath, std::string coordinates, std::string method, float methodParameter, bool closestViews, bool blockSampling, int inputRange, int runs);
 
     private:
     static constexpr int OUTPUT_SURFACE_COUNT{2};

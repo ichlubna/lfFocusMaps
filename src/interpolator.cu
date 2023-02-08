@@ -242,7 +242,7 @@ Kernels::FocusMethod parseMethod(std::string method)
     return Kernels::FocusMethod::BRUTE_FORCE;
 } 
 
-void Interpolator::interpolate(std::string outputPath, std::string coordinates, std::string method, float methodParameter, bool closestViews, int inputRange, int runs)
+void Interpolator::interpolate(std::string outputPath, std::string coordinates, std::string method, float methodParameter, bool closestViews, bool blockSampling, int inputRange, int runs)
 {
     glm::vec2 coords = parseCoordinates(coordinates);
     loadGPUWeights(coords);
@@ -260,7 +260,7 @@ void Interpolator::interpolate(std::string outputPath, std::string coordinates, 
     {
         Timer timer;
         Kernels::process<<<dimGrid, dimBlock, sharedSize>>>
-        (focusMethod, methodParameter, closestViews, 
+        (focusMethod, methodParameter, closestViews, blockSampling, 
         reinterpret_cast<cudaTextureObject_t*>(textureObjectsArr), reinterpret_cast<cudaSurfaceObject_t*>(surfaceObjectsArr),
         weightsGPU, closestFramesWeightsGPU, closestFramesCoordsLinearGPU, range);
         auto time = timer.stop();

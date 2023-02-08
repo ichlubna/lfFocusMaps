@@ -10,6 +10,7 @@ int main(int argc, char **argv)
     std::string method = static_cast<std::string>(args["-m"]);
     float methodParameter = static_cast<float>(args["-p"]);
     bool closestViews = static_cast<bool>(args["-f"]);
+    bool blockSampling = static_cast<bool>(args["-b"]);
     int range = static_cast<int>(args["-r"]);
     int runs = std::stoi(static_cast<std::string>(args["-t"]));
 
@@ -22,6 +23,7 @@ int main(int argc, char **argv)
                           "     OD (one distance) - parameter: focusing distance in pixels\n"
                           "     BF (brute force) - parameter: number of scanning steps\n"
                           "-p - method parameter\n"
+                          "-b - block sampling - uses also neighboring pixels for matching\n"
                           "-f - use faster variant with only four closest views\n"
                           "-r - scanning range in pixels - the maximum disparity between input images (default is half of image width)\n"
                           "-t - number of kernel runs for performance measurement - default is one\n"
@@ -46,7 +48,7 @@ int main(int argc, char **argv)
     try
     {
         Interpolator interpolator(path);
-        interpolator.interpolate(outputPath, coordinates, method, methodParameter, closestViews, range, runs);
+        interpolator.interpolate(outputPath, coordinates, method, methodParameter, closestViews, blockSampling, range, runs);
     }
     catch(const std::exception &e)
     {
