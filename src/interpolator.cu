@@ -179,13 +179,6 @@ void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
     cudaMemcpy(weightsGPU, weights.data(), weights.size()*sizeof(float), cudaMemcpyHostToDevice);
 }
 
-Interpolator::Method Interpolator::parseMethod(std::string method)
-{
-    if(method == "BF")
-        return BRUTE_FORCE;
-    return BRUTE_FORCE; 
-}
-
 glm::vec2 Interpolator::parseCoordinates(std::string coordinates)
 {
     constexpr char delim{'_'};
@@ -240,7 +233,16 @@ void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
     cudaMemcpy(closestFramesWeightsGPU, closestFramesWeights.data(), closestFramesWeights.size()*sizeof(float), cudaMemcpyHostToDevice);
 }
 
-void Interpolator::interpolate(std::string outputPath, std::string coordinates, std::string method, int runs)
+Kernels::FocusMethod parseMethod(std::string method)
+{
+    if(method == "OD")
+        return Kernels::FocusMethod::ONE_DISTANCE;
+    else if(method == "BF")
+        return Kernels::FocusMethod::BRUTE_FORCE;
+    return Kernels::FocusMethod::BRUTE_FORCE;
+} 
+
+void Interpolator::interpolate(std::string outputPath, std::string coordinates, std::string method, float methodParameter, bool closestViews, int inputRange, int runs)
 {
     glm::vec2 coords = parseCoordinates(coordinates);
     loadGPUWeights(coords);
@@ -249,12 +251,18 @@ void Interpolator::interpolate(std::string outputPath, std::string coordinates, 
     dim3 dimBlock(16, 16, 1);
     dim3 dimGrid(resolution.x/dimBlock.x, resolution.y/dimBlock.y, 1);
 
+    int range = (inputRange > 0) ? inputRange : resolution.x/2;
+    auto focusMethod = parseMethod(method); 
+
     std::cout << "Elapsed time: "<<std::endl;
     float avgTime{0};
     for(int i=0; i<runs; i++)
     {
         Timer timer;
-        Kernels::process<<<dimGrid, dimBlock, sharedSize>>>(reinterpret_cast<cudaTextureObject_t*>(textureObjectsArr), reinterpret_cast<cudaSurfaceObject_t*>(surfaceObjectsArr), weightsGPU, closestFramesWeightsGPU, closestFramesCoordsLinearGPU);
+        Kernels::process<<<dimGrid, dimBlock, sharedSize>>>
+        (focusMethod, methodParameter, closestViews, 
+        reinterpret_cast<cudaTextureObject_t*>(textureObjectsArr), reinterpret_cast<cudaSurfaceObject_t*>(surfaceObjectsArr),
+        weightsGPU, closestFramesWeightsGPU, closestFramesCoordsLinearGPU, range);
         auto time = timer.stop();
         avgTime += time;
         std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;

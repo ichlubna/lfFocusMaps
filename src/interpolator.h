@@ -7,10 +7,9 @@ class Interpolator
     public:
     Interpolator(std::string inputPath);
     ~Interpolator();
-    void interpolate(std::string outputPath, std::string coordinates, std::string method, int runs);
+    void interpolate(std::string outputPath, std::string coordinates, std::string method, float methodParameter, bool closestViews, int inputRange, int runs);
 
     private:
-    enum Method {BRUTE_FORCE};
     static constexpr int OUTPUT_SURFACE_COUNT{2};
     std::vector<int*> surfaceInputArrays;
     std::vector<int*> surfaceOutputArrays;
@@ -32,7 +31,6 @@ class Interpolator
     void loadGPUConstants();
     void loadGPUWeights(glm::vec2 viewCoordinates);
     int* loadImageToArray(const uint8_t *data, glm::ivec3 size);
-    Interpolator::Method parseMethod(std::string method);
     glm::vec2 parseCoordinates(std::string coordinates);
     void storeResults(std::string path);
     std::vector<float> generateWeights(glm::vec2 coords);

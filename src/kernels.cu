@@ -3,6 +3,7 @@
 
 namespace Kernels
 {
+    enum FocusMethod{ONE_DISTANCE, BRUTE_FORCE};
     enum ClosestFrames{TOP_LEFT=0, TOP_RIGHT=1, BOTTOM_LEFT=2, BOTTOM_RIGHT=3};
     __device__ constexpr bool GUESS_HANDLES{false};
 
@@ -196,31 +197,42 @@ namespace Kernels
         return coords;
     }
    
-    template <typename T>
-    __device__ PixelArray<T> loadPx(int imageID, int2 coords, cudaTextureObject_t *surfaces)
+    namespace Pixel
     {
-        constexpr int MULT_FOUR_SHIFT{2};
-        if constexpr (GUESS_HANDLES)
-            return PixelArray<T>{surf2Dread<uchar4>(imageID+1, coords.x<<MULT_FOUR_SHIFT, coords.y, cudaBoundaryModeClamp)};
-        else    
-            return PixelArray<T>{surf2Dread<uchar4>(surfaces[imageID], coords.x<<MULT_FOUR_SHIFT, coords.y, cudaBoundaryModeClamp)};
-    }
-   
-    /* 
-    template <typename T>
-    __device__ PixelArray<T> loadPx(int imageID, float2 coords, cudaTextureObject_t *textures)
-    {
-        if constexpr (GUESS_HANDLES)
-            return PixelArray<T>{tex2D<uchar4>(imageID+1, coords.x+0.5f, coords.y+0.5f)};
-        else    
-            return PixelArray<T>{tex2D<uchar4>(textures[imageID], coords.x, coords.y)};
-    }
-    */
-    
-    template <typename T>
-    __device__ float pixelDistance(PixelArray<T> a, PixelArray<T> b)
-    {
-        return max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
+        template <typename T>
+        __device__ float distance(PixelArray<T> a, PixelArray<T> b)
+        {
+            return max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
+        }
+
+        __device__ void store(uchar4 px, int imageID, int2 coords, cudaSurfaceObject_t *surfaces)
+        {
+            if constexpr (GUESS_HANDLES)
+                surf2Dwrite<uchar4>(px, imageID+1+gridSize(), coords.x*sizeof(uchar4), coords.y);
+            else    
+                surf2Dwrite<uchar4>(px, surfaces[imageID+gridSize()], coords.x*sizeof(uchar4), coords.y);
+        }
+
+        template <typename T>
+        __device__ PixelArray<T> load(int imageID, int2 coords, cudaTextureObject_t *surfaces)
+        {
+            constexpr int MULT_FOUR_SHIFT{2};
+            if constexpr (GUESS_HANDLES)
+                return PixelArray<T>{surf2Dread<uchar4>(imageID+1, coords.x<<MULT_FOUR_SHIFT, coords.y, cudaBoundaryModeClamp)};
+            else    
+                return PixelArray<T>{surf2Dread<uchar4>(surfaces[imageID], coords.x<<MULT_FOUR_SHIFT, coords.y, cudaBoundaryModeClamp)};
+        }
+       
+        /* 
+        template <typename T>
+        __device__ PixelArray<T> loadPx(int imageID, float2 coords, cudaTextureObject_t *textures)
+        {
+            if constexpr (GUESS_HANDLES)
+                return PixelArray<T>{tex2D<uchar4>(imageID+1, coords.x+0.5f, coords.y+0.5f)};
+            else    
+                return PixelArray<T>{tex2D<uchar4>(textures[imageID], coords.x, coords.y)};
+        }
+        */
     }
 
     template <typename T>
@@ -234,11 +246,11 @@ namespace Kernels
         public:
         __device__ void add(PixelArray<T> val)
         {
-           float distance = pixelDistance(m, val);
+           float distance = Pixel::distance(m, val);
            n++;
            PixelArray<T> delta = val-m;
            m += delta/static_cast<T>(n);
-           m2 += distance * pixelDistance(m, val);
+           m2 += distance * Pixel::distance(m, val);
         }
         __device__ float variance()
         {
@@ -253,62 +265,75 @@ namespace Kernels
 
     __device__ int2 focusCoords(int gridID, int2 pxCoords, int focus)
     {
-        //float2 offset{(currentColRow.x-viewColRow.x)/colsRows().x, (currentColRow.y-viewColRow.y)/colsRows().y};
         float2 offset = offsets[gridID];
-        int2 coords{static_cast<int>(round(offset.x*focus))+pxCoords.x, static_cast<int>(round(offset.y*focus))+pxCoords.y};
+        int2 coords{static_cast<int>(pxCoords.x-round(offset.x*focus)), static_cast<int>(round(pxCoords.y-offset.y*focus))};
         return coords;
     }
 
-    __device__ float evaluateFocusLevel(int2 coords, float2 viewColRow, int focus, cudaSurfaceObject_t *surfaces)
+    namespace FocusLevel
     {
-        auto cr = colsRows();
-        OnlineVariance<float> variance;
-        int gridID = 0; 
-        for(int row=0; row<cr.y; row++) 
-        {     
-            gridID = row*cr.x;
-            for(int col=0; col<cr.x; col++) 
-            {
-                auto px{loadPx<float>(gridID, focusCoords(gridID, coords, focus), surfaces)};
-                variance += px;
-                gridID++;
+        __device__ float evaluate(int2 coords, int focus, cudaSurfaceObject_t *surfaces)
+        {
+            auto cr = colsRows();
+            OnlineVariance<float> variance;
+            int gridID = 0; 
+            for(int row=0; row<cr.y; row++) 
+            {     
+                gridID = row*cr.x;
+                for(int col=0; col<cr.x; col++) 
+                {
+                    auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus), surfaces)};
+                    variance += px;
+                    gridID++;
+                }
             }
+            return variance.variance();
         }
-        return variance.variance();
+        
+        __device__ uchar4 render(int2 coords, int focus, cudaSurfaceObject_t *surfaces, float *weights)
+        {
+            auto cr = colsRows();
+            PixelArray<float> sum;
+            int gridID = 0; 
+            for(int row=0; row<cr.y; row++) 
+            {     
+                gridID = row*cr.x;
+                for(int col=0; col<cr.x; col++) 
+                {
+                    auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus), surfaces)};
+                    sum.addWeighted(weights[gridID], px);
+                    gridID++;
+                }
+            }
+            return sum.uch4();
+        }
     }
     
-    __device__ uchar4 renderFocusLevel(int2 coords, float2 viewColRow, int focus, cudaSurfaceObject_t *surfaces, float *weights)
+    namespace Focusing
     {
-        auto cr = colsRows();
-        PixelArray<float> sum;
-        int gridID = 0; 
-        for(int row=0; row<cr.y; row++) 
-        {     
-            gridID = row*cr.x;
-            for(int col=0; col<cr.x; col++) 
+        __device__ int bruteForce(int2 coords, int steps, int range, bool closestViews, cudaTextureObject_t *textures, cudaSurfaceObject_t *surfaces, int *closestCoords)
+        {
+            float stepSize{static_cast<float>(range)/steps};
+            float focus{0.0f};
+            float minVariance{99999999999999999.0f};
+            int optimalFocus{0};
+            
+            for(int step=0; step<steps; step++)
             {
-                auto px{loadPx<float>(gridID, focusCoords(gridID, coords, focus), surfaces)};
-                sum.addWeighted(weights[gridID], px);
-                gridID++;
+                int pxFocus = round(focus);
+                float variance = FocusLevel::evaluate(coords, pxFocus, surfaces);
+                if(variance < minVariance)
+                {
+                   minVariance = variance;
+                   optimalFocus = pxFocus; 
+                }
+                focus += stepSize;  
             }
+            return optimalFocus;
         }
-        return sum.uch4();
-    }
-    
-    __device__ void bruteForceScan()
-    {
-
     }
 
-    __device__ void storePx(uchar4 px, int imageID, int2 coords, cudaSurfaceObject_t *surfaces)
-    {
-        if constexpr (GUESS_HANDLES)
-            surf2Dwrite<uchar4>(px, imageID+1+gridSize(), coords.x*sizeof(uchar4), coords.y);
-        else    
-            surf2Dwrite<uchar4>(px, surfaces[imageID+gridSize()], coords.x*sizeof(uchar4), coords.y);
-    }
-
-    __global__ void process(cudaTextureObject_t *textures, cudaSurfaceObject_t *surfaces, float *weights, float *closestWeights, int *closestCoords)
+    __global__ void process(FocusMethod method, float methodParameter, bool closestViews, cudaTextureObject_t *textures, cudaSurfaceObject_t *surfaces, float *weights, float *closestWeights, int *closestCoords, int range)
     {
         int2 coords = getImgCoords();
         if(coordsOutside(coords))
@@ -318,10 +343,24 @@ namespace Kernels
         //auto localWeights = memoryPartitioner.array(gridSize());
         //loadWeightsSync<half>(weights, localWeights.data, gridSize()/2);
 
-        uchar4 color = renderFocusLevel(coords, {3.5,3.5}, 0, surfaces, weights);
+        int focus{0};
+        switch(method)
+        {
+            case ONE_DISTANCE:
+                focus = static_cast<int>(methodParameter);
+            break;
 
-        storePx(color, focusMapID(), coords, surfaces);
-        storePx(color, renderImageID(), coords, surfaces);
+            case BRUTE_FORCE:
+                focus = Focusing::bruteForce(coords, static_cast<int>(methodParameter), range, closestViews, textures, surfaces, closestCoords);
+            break;
+
+            default:
+            break;
+        }        
+        uchar4 color = FocusLevel::render(coords, focus, surfaces, weights);
+        unsigned char focusColor = (static_cast<float>(focus)/range)*UCHAR_MAX;
+        Pixel::store(uchar4{focusColor, focusColor, focusColor, 255}, focusMapID(), coords, surfaces);
+        Pixel::store(color, renderImageID(), coords, surfaces);
     }
 
 }

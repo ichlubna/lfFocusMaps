@@ -8,6 +8,9 @@ int main(int argc, char **argv)
     std::string coordinates = static_cast<std::string>(args["-c"]);
     std::string outputPath = static_cast<std::string>(args["-o"]);
     std::string method = static_cast<std::string>(args["-m"]);
+    float methodParameter = static_cast<float>(args["-p"]);
+    bool closestViews = static_cast<bool>(args["-f"]);
+    int range = static_cast<int>(args["-r"]);
     int runs = std::stoi(static_cast<std::string>(args["-t"]));
 
     std::string helpText{ "Usage:\n"
@@ -15,13 +18,18 @@ int main(int argc, char **argv)
                           "-i - folder with lf grid images - named as column_row.extension, e.g. 01_12.jpg\n"
                           "-c - camera position in normalized coordinates of the grid in format: x_y, e.g., 0.5_0.1\n"
                           "-o - output path\n"
-                          "-m - method: BF - brute force\n"
+                          "-m - method:\n"
+                          "     OD (one distance) - parameter: focusing distance in pixels\n"
+                          "     BF (brute force) - parameter: number of scanning steps\n"
+                          "-p - method parameter\n"
+                          "-f - use faster variant with only four closest views\n"
+                          "-r - scanning range in pixels - the maximum disparity between input images (default is half of image width)\n"
                           "-t - number of kernel runs for performance measurement - default is one\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;
 
-    if(!args["-i"] || !args["-c"] || !args["-o"])
+    if(!args["-i"] || !args["-c"] || !args["-o"] || !args["-m"])
     {
         std::cerr << "Missing required parameters. Use -h for help." << std::endl;
         return EXIT_FAILURE;
@@ -38,7 +46,7 @@ int main(int argc, char **argv)
     try
     {
         Interpolator interpolator(path);
-        interpolator.interpolate(outputPath, coordinates, method, runs);
+        interpolator.interpolate(outputPath, coordinates, method, methodParameter, closestViews, range, runs);
     }
     catch(const std::exception &e)
     {
