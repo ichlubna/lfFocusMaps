@@ -246,6 +246,7 @@ void Interpolator::interpolate(std::string outputPath, std::string coordinates, 
 {
     glm::vec2 coords = parseCoordinates(coordinates);
     loadGPUWeights(coords);
+    prepareClosestFrames(coords);
     loadGPUOffsets(coords);   
     
     dim3 dimBlock(16, 16, 1);
