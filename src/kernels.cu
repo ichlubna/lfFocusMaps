@@ -289,41 +289,52 @@ namespace Kernels
             }
             return variance.variance();
         }
-        
-        __device__ float evaluateBlock(int2 coords, int focus, cudaSurfaceObject_t *surfaces)
+       
+        __device__ void evaluateBlock(int gridID, int focus, int2 coords, int blockSize, const int2 *blockOffsets, cudaSurfaceObject_t *surfaces, OnlineVariance<float> *variances)
         {
-            constexpr int BLOCK_SIZE{5};
-            const int2 BLOCK_OFFSETS[]{ {0,0}, {-1,1}, {1,1}, {-1,-1}, {1,-1}};//, {0,0}, {0,1}, {0,-1}, {-1,0}, {1,0} };
+            for(int blockPx=0; blockPx<blockSize; blockPx++)
+            {
+                int2 inBlockCoords{coords.x+blockOffsets[blockPx].x, coords.y+blockOffsets[blockPx].y};
+                auto px{Pixel::load<float>(gridID, focusCoords(gridID, inBlockCoords, focus), surfaces)};
+                variances[blockPx] += px;
+            }
+        }
+
+        template<int blockSize> 
+        __device__ float evaluateVariance(int2 coords, int focus, cudaSurfaceObject_t *surfaces)
+        {
+            const int2 BLOCK_OFFSETS[]{ {0,0}, {-1,1}, {1,1}, {-1,-1}, {1,-1} };//, {0,0}, {0,1}, {0,-1}, {-1,0}, {1,0} };
             auto cr = colsRows();
-            OnlineVariance<float> variance[BLOCK_SIZE];
+            OnlineVariance<float> variance[blockSize];
             int gridID = 0; 
             for(int row=0; row<cr.y; row++) 
             {     
                 gridID = row*cr.x;
                 for(int col=0; col<cr.x; col++) 
                 {
-                    for(int blockPx=0; blockPx<BLOCK_SIZE; blockPx++)
-                    {
-                        int2 inBlockCoords{coords.x+BLOCK_OFFSETS[blockPx].x, coords.y+BLOCK_OFFSETS[blockPx].y};
-                        auto px{Pixel::load<float>(gridID, focusCoords(gridID, inBlockCoords, focus), surfaces)};
-                        variance[blockPx] += px;
-                    }
+                    evaluateBlock(gridID, focus, coords, blockSize, BLOCK_OFFSETS, surfaces, variance);
                     gridID++;
                 }
-            }
-            
+            }           
             float finalVariance{0};
-            for(int blockPx=0; blockPx<BLOCK_SIZE; blockPx++)
+            for(int blockPx=0; blockPx<blockSize; blockPx++)
                 finalVariance += variance[blockPx].variance();
             return finalVariance;
         }
         
-        __device__ float evaluate(int2 coords, int focus, cudaSurfaceObject_t *surfaces, bool blockSampling)
+        __device__ float evaluate(int2 coords, int focus, cudaSurfaceObject_t *surfaces, bool blockSampling, bool closestViews, int *closestCoords)
         {
-            if(blockSampling)
-                return evaluateBlock(coords, focus, surfaces);
+            constexpr int BLOCK_SIZE{5};
+            if(closestViews)
+                if(blockSampling)
+                    return evaluateVariance<BLOCK_SIZE>(coords, focus, surfaces);
+                else
+                    return evaluateVariance<1>(coords, focus, surfaces);
             else
-                return evaluatePixel(coords, focus, surfaces);
+                if(blockSampling)
+                    return evaluateVariance<BLOCK_SIZE>(coords, focus, surfaces);
+                else
+                    return evaluateVariance<1>(coords, focus, surfaces);
         }
         
         __device__ uchar4 render(int2 coords, int focus, cudaSurfaceObject_t *surfaces, float *weights)
@@ -357,7 +368,7 @@ namespace Kernels
             for(int step=0; step<steps; step++)
             {
                 int pxFocus = round(focus);
-                float variance = FocusLevel::evaluate(coords, pxFocus, surfaces, blockSampling);
+                float variance = FocusLevel::evaluate(coords, pxFocus, surfaces, blockSampling, closestViews, closestCoords);
                 if(variance < minVariance)
                 {
                    minVariance = variance;
