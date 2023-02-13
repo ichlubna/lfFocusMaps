@@ -193,7 +193,7 @@ glm::vec2 Interpolator::parseCoordinates(std::string coordinates)
     for (const auto &number : numbers)
     {
         float value = std::stof(number);
-        coords[i] = value*colsRows[i%2];
+        coords[i] = value*(colsRows[i%2]-1);
         i++;
     }
     return coords;
@@ -225,7 +225,7 @@ void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
     std::vector<int> closestFramesCoordsLinear;
     for(auto const &coords : closestFramesCoords)
        closestFramesCoordsLinear.push_back(coords.y*colsRows.x+coords.x); 
-  
+     
     cudaMalloc(reinterpret_cast<void **>(&closestFramesCoordsLinearGPU), sizeof(int)*closestFramesCoordsLinear.size());
     cudaMemcpy(closestFramesCoordsLinearGPU, closestFramesCoordsLinear.data(), closestFramesCoordsLinear.size()*sizeof(int), cudaMemcpyHostToDevice);
     

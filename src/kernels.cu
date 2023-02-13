@@ -202,10 +202,14 @@ namespace Kernels
    
     namespace Pixel
     {
-        template <typename T>
+        template <typename T, size_t order=1>
         __device__ float distance(PixelArray<T> a, PixelArray<T> b)
         {
-            return max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
+            float dist = max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
+            float finalDist = dist;
+            for(int i=0; i<order; i++)
+                finalDist *= dist;
+            return finalDist;
         }
 
         __device__ void store(uchar4 px, int imageID, int2 coords, cudaSurfaceObject_t *surfaces)
@@ -249,7 +253,7 @@ namespace Kernels
         public:
         __device__ void add(PixelArray<T> val)
         {
-           float distance = Pixel::distance(m, val);
+           float distance = Pixel::distance<T, 4>(m, val);
            n++;
            PixelArray<T> delta = val-m;
            m += delta/static_cast<T>(n);
@@ -305,85 +309,77 @@ namespace Kernels
             }
         }
 
-        template<int blockSize> 
-        __device__ float evaluateVariance(int2 coords, int focus, cudaSurfaceObject_t *surfaces)
+        template<int blockSize, bool closest=false> 
+        __device__ float evaluateVariance(int2 coords, int focus, cudaSurfaceObject_t *surfaces, int *closestCoords=nullptr)
         {
             auto cr = colsRows();
             OnlineVariance<float> variance[blockSize];
-            int gridID = 0; 
-            for(int row=0; row<cr.y; row++) 
-            {     
-                gridID = row*cr.x;
-                for(int col=0; col<cr.x; col++) 
-                {
+            int gridID = 0;
+
+            if constexpr (closest)
+                for(int i=0; i<CLOSEST_COUNT; i++) 
+                {     
+                    int gridID = closestCoords[i];
                     evaluateBlock<blockSize>(gridID, focus, coords, surfaces, variance);
-                    gridID++;
+                }           
+            else
+                for(int row=0; row<cr.y; row++) 
+                {     
+                    gridID = row*cr.x;
+                    for(int col=0; col<cr.x; col++) 
+                    {
+                        evaluateBlock<blockSize>(gridID, focus, coords, surfaces, variance);
+                        gridID++;
+                    }
                 }
-            }           
+
             float finalVariance{0};
             for(int blockPx=0; blockPx<blockSize; blockPx++)
                 finalVariance += variance[blockPx].variance();
             return finalVariance;
         }
-        
-        template<int blockSize> 
-        __device__ float evaluateVarianceClosest(int2 coords, int focus, cudaSurfaceObject_t *surfaces, int *closestCoords)
-        {
-            OnlineVariance<float> variance[blockSize];
-            for(int i=0; i<CLOSEST_COUNT; i++) 
-            {     
-                int gridID = closestCoords[i];
-                evaluateBlock<blockSize>(gridID, focus, coords, surfaces, variance);
-            }           
-            float finalVariance{0};
-            for(int blockPx=0; blockPx<blockSize; blockPx++)
-                finalVariance += variance[blockPx].variance();
-            return finalVariance;
-        }
-        
+         
         __device__ float evaluate(int2 coords, int focus, cudaSurfaceObject_t *surfaces, bool blockSampling, bool closestViews, int *closestCoords)
         {
             if(closestViews)
                 if(blockSampling)
-                    return evaluateVarianceClosest<BLOCK_SAMPLE_COUNT>(coords, focus, surfaces, closestCoords);
+                    return evaluateVariance<BLOCK_SAMPLE_COUNT, true>(coords, focus, surfaces, closestCoords);
                 else
-                    return evaluateVarianceClosest<PIXEL_SAMPLE_COUNT>(coords, focus, surfaces, closestCoords);
+                    return evaluateVariance<PIXEL_SAMPLE_COUNT, true>(coords, focus, surfaces, closestCoords);
             else
                 if(blockSampling)
                     return evaluateVariance<BLOCK_SAMPLE_COUNT>(coords, focus, surfaces);
                 else
                     return evaluateVariance<PIXEL_SAMPLE_COUNT>(coords, focus, surfaces);
         }
-        
-        __device__ uchar4 render(int2 coords, int focus, cudaSurfaceObject_t *surfaces, float *weights)
+       
+        template<bool closest=false>
+        __device__ uchar4 render(int2 coords, int focus, cudaSurfaceObject_t *surfaces, float *weights, int *closestCoords=nullptr)
         {
             auto cr = colsRows();
             PixelArray<float> sum;
             int gridID = 0; 
-            for(int row=0; row<cr.y; row++) 
-            {     
-                gridID = row*cr.x;
-                for(int col=0; col<cr.x; col++) 
+            
+            if constexpr (closest)
+                for(int i=0; i<CLOSEST_COUNT; i++) 
                 {
+                    gridID = closestCoords[i];
                     auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus), surfaces)};
-                    sum.addWeighted(weights[gridID], px);
-                    gridID++;
+                    sum.addWeighted(weights[i], px);
                 }
-            }
+            else
+                for(int row=0; row<cr.y; row++) 
+                {     
+                    gridID = row*cr.x;
+                    for(int col=0; col<cr.x; col++) 
+                    {
+                        auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus), surfaces)};
+                        sum.addWeighted(weights[gridID], px);
+                        gridID++;
+                    }
+                }
             return sum.uch4();
-        }
-        
-        __device__ uchar4 renderClosest(int2 coords, int focus, cudaSurfaceObject_t *surfaces, float *weights, int *closestCoords)
-        {
-            PixelArray<float> sum;
-            for(int i=0; i<CLOSEST_COUNT; i++) 
-            {
-                int gridID = closestCoords[i];
-                auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus), surfaces)};
-                sum.addWeighted(weights[i], px);
-            }
-            return sum.uch4();
-        }
+        }      
     }
     
     namespace Focusing
@@ -392,7 +388,7 @@ namespace Kernels
         {
             float stepSize{static_cast<float>(range)/steps};
             float focus{0.0f};
-            float minVariance{99999999999999999.0f};
+            float minVariance{FLT_MAX};
             int optimalFocus{0};
             
             for(int step=0; step<steps; step++)
@@ -436,9 +432,10 @@ namespace Kernels
         }        
         uchar4 color{0};
         if(closestViews)
-            color = FocusLevel::renderClosest(coords, focus, surfaces, weights, closestCoords);
+            color = FocusLevel::render<true>(coords, focus, surfaces, closestWeights, closestCoords);
         else
             color = FocusLevel::render(coords, focus, surfaces, weights);
+
         unsigned char focusColor = (static_cast<float>(focus)/range)*UCHAR_MAX;
         Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, focusMapID(), coords, surfaces);
         Pixel::store(color, renderImageID(), coords, surfaces);
