@@ -1,0 +1,8 @@
+#ifndef METHODS_H
+#define METHODS_H
+enum FocusMethod{ONE_DISTANCE, BRUTE_FORCE};
+enum ClosestFrames{TOP_LEFT=0, TOP_RIGHT=1, BOTTOM_LEFT=2, BOTTOM_RIGHT=3};
+enum ConstantIDs{IMG_RES_X=0, IMG_RES_Y, COLS, ROWS, GRID_SIZE, DISTANCE_ORDER, CONSTANTS_COUNT};
+enum FileNames {FOCUS_MAP=0, RENDER_IMAGE=1};
+constexpr int CHANNEL_COUNT{4};
+#endif

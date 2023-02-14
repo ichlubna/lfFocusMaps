@@ -1,23 +1,19 @@
 #include <glm/glm.hpp>
 #include <cuda_fp16.h>
+#include "methods.h"
 
 namespace Kernels
 {
-    enum FocusMethod{ONE_DISTANCE, BRUTE_FORCE};
-    enum ClosestFrames{TOP_LEFT=0, TOP_RIGHT=1, BOTTOM_LEFT=2, BOTTOM_RIGHT=3};
     constexpr int BLOCK_SAMPLE_COUNT{5};
     constexpr int PIXEL_SAMPLE_COUNT{1};
     constexpr int CLOSEST_COUNT{4}; 
     __device__ constexpr bool GUESS_HANDLES{false};
 
-    __device__ constexpr int CHANNEL_COUNT{4};
-    __device__ constexpr int CONSTANTS_COUNT{7};
-    __constant__ int constants[CONSTANTS_COUNT];
-    __device__ int2 imgRes(){return {constants[0], constants[1]};}
-    __device__ int2 colsRows(){return{constants[2], constants[3]};}
-    __device__ int gridSize(){return constants[4];}
-    __device__ int focusMapID(){return constants[5];}
-    __device__ int renderImageID(){return constants[6];}
+    __constant__ int constants[ConstantIDs::CONSTANTS_COUNT];
+    __device__ int2 imgRes(){return {constants[ConstantIDs::IMG_RES_X], constants[ConstantIDs::IMG_RES_Y]};}
+    __device__ int2 colsRows(){return{constants[ConstantIDs::COLS], constants[ConstantIDs::ROWS]};}
+    __device__ int gridSize(){return constants[ConstantIDs::GRID_SIZE];}
+    __device__ int distanceOrder(){return constants[ConstantIDs::DISTANCE_ORDER];}
 
     __device__ constexpr int MAX_IMAGES{256};
     __constant__ float2 offsets[MAX_IMAGES];
@@ -202,14 +198,11 @@ namespace Kernels
    
     namespace Pixel
     {
-        template <typename T, size_t order=1>
+        template <typename T>
         __device__ float distance(PixelArray<T> a, PixelArray<T> b)
         {
-            float dist = max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
-            float finalDist = dist;
-            for(int i=0; i<order; i++)
-                finalDist *= dist;
-            return finalDist;
+            float dist = max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2])); 
+            return __powf (dist, distanceOrder());
         }
 
         __device__ void store(uchar4 px, int imageID, int2 coords, cudaSurfaceObject_t *surfaces)
@@ -253,7 +246,7 @@ namespace Kernels
         public:
         __device__ void add(PixelArray<T> val)
         {
-           float distance = Pixel::distance<T, 4>(m, val);
+           float distance = Pixel::distance<T>(m, val);
            n++;
            PixelArray<T> delta = val-m;
            m += delta/static_cast<T>(n);
@@ -437,7 +430,7 @@ namespace Kernels
             color = FocusLevel::render(coords, focus, surfaces, weights);
 
         unsigned char focusColor = (static_cast<float>(focus)/range)*UCHAR_MAX;
-        Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, focusMapID(), coords, surfaces);
-        Pixel::store(color, renderImageID(), coords, surfaces);
+        Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, coords, surfaces);
+        Pixel::store(color, FileNames::RENDER_IMAGE, coords, surfaces);
     }
 }

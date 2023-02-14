@@ -44,7 +44,6 @@ Interpolator::~Interpolator()
 void Interpolator::init()
 {
     loadGPUData();
-    loadGPUConstants();
     sharedSize = 0;//sizeof(half)*colsRows.x*colsRows.y;
 }
 
@@ -136,9 +135,15 @@ void Interpolator::loadGPUData()
     cudaMemcpy(surfaceObjectsArr, surfaces.data(), surfaces.size()*sizeof(cudaSurfaceObject_t), cudaMemcpyHostToDevice);
 }
 
-void Interpolator::loadGPUConstants()
+void Interpolator::loadGPUConstants(int distanceOrder)
 {
-    std::vector<int> values{resolution.x, resolution.y, colsRows.x, colsRows.y, colsRows.x*colsRows.y, FileNames::FOCUS_MAP, FileNames::RENDER_IMAGE};
+    std::vector<int> values(ConstantIDs::CONSTANTS_COUNT);
+    values[ConstantIDs::IMG_RES_X] = resolution.x;
+    values[ConstantIDs::IMG_RES_Y] = resolution.y;
+    values[ConstantIDs::GRID_SIZE] = colsRows.x*colsRows.y;
+    values[ConstantIDs::COLS] = colsRows.x;
+    values[ConstantIDs::ROWS] = colsRows.y;
+    values[ConstantIDs::DISTANCE_ORDER] = distanceOrder;
     cudaMemcpyToSymbol(Kernels::constants, values.data(), values.size() * sizeof(int));
 }
 
@@ -179,24 +184,16 @@ void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
     cudaMemcpy(weightsGPU, weights.data(), weights.size()*sizeof(float), cudaMemcpyHostToDevice);
 }
 
-glm::vec2 Interpolator::parseCoordinates(std::string coordinates)
+glm::vec2 Interpolator::InterpolationParams::parseCoordinates(std::string coordinates)
 {
     constexpr char delim{'_'};
-    std::vector <std::string> numbers;
+    std::vector <float> numbers;
     std::stringstream ss(coordinates); 
     std::string value; 
     while(getline(ss, value, delim))
-        numbers.push_back(value);
+        numbers.push_back(std::stof(value));
 
-    glm::vec2 coords;
-    int i{0};
-    for (const auto &number : numbers)
-    {
-        float value = std::stof(number);
-        coords[i] = value*(colsRows[i%2]-1);
-        i++;
-    }
-    return coords;
+    return {numbers[0], numbers[1]};
 }
 
 void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
@@ -210,17 +207,17 @@ void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
     std::vector<glm::ivec2> closestFramesCoords(CLOSEST_FRAMES_COUNT);
     glm::vec2 unitPos{glm::fract(viewCoordinates)};
 
-    closestFramesCoords[Kernels::TOP_LEFT] = {downCoords};
-    closestFramesWeights[Kernels::TOP_LEFT] = (1 - unitPos.x) * (1 - unitPos.y);
+    closestFramesCoords[ClosestFrames::TOP_LEFT] = {downCoords};
+    closestFramesWeights[ClosestFrames::TOP_LEFT] = (1 - unitPos.x) * (1 - unitPos.y);
     
-    closestFramesCoords[Kernels::TOP_RIGHT] = {upCoords.x, downCoords.y};;
-    closestFramesWeights[Kernels::TOP_RIGHT] = unitPos.x * (1 - unitPos.y);
+    closestFramesCoords[ClosestFrames::TOP_RIGHT] = {upCoords.x, downCoords.y};;
+    closestFramesWeights[ClosestFrames::TOP_RIGHT] = unitPos.x * (1 - unitPos.y);
     
-    closestFramesCoords[Kernels::BOTTOM_LEFT] = {downCoords.x, upCoords.y};
-    closestFramesWeights[Kernels::BOTTOM_LEFT] = (1 - unitPos.x) * unitPos.y;
+    closestFramesCoords[ClosestFrames::BOTTOM_LEFT] = {downCoords.x, upCoords.y};
+    closestFramesWeights[ClosestFrames::BOTTOM_LEFT] = (1 - unitPos.x) * unitPos.y;
 
-    closestFramesCoords[Kernels::BOTTOM_RIGHT] = {upCoords};
-    closestFramesWeights[Kernels::BOTTOM_RIGHT] = unitPos.x * unitPos.y;
+    closestFramesCoords[ClosestFrames::BOTTOM_RIGHT] = {upCoords};
+    closestFramesWeights[ClosestFrames::BOTTOM_RIGHT] = unitPos.x * unitPos.y;
   
     std::vector<int> closestFramesCoordsLinear;
     for(auto const &coords : closestFramesCoords)
@@ -233,18 +230,19 @@ void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
     cudaMemcpy(closestFramesWeightsGPU, closestFramesWeights.data(), closestFramesWeights.size()*sizeof(float), cudaMemcpyHostToDevice);
 }
 
-Kernels::FocusMethod parseMethod(std::string method)
+FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method)
 {
     if(method == "OD")
-        return Kernels::FocusMethod::ONE_DISTANCE;
+        return FocusMethod::ONE_DISTANCE;
     else if(method == "BF")
-        return Kernels::FocusMethod::BRUTE_FORCE;
-    return Kernels::FocusMethod::BRUTE_FORCE;
+        return FocusMethod::BRUTE_FORCE;
+    return FocusMethod::BRUTE_FORCE;
 } 
 
-void Interpolator::interpolate(std::string outputPath, std::string coordinates, std::string method, float methodParameter, bool closestViews, bool blockSampling, int inputRange, int runs)
+void Interpolator::interpolate(InterpolationParams params)
 {
-    glm::vec2 coords = parseCoordinates(coordinates);
+    glm::vec2 coords = glm::vec2(colsRows-1)*params.coordinates;
+    loadGPUConstants(params.distanceOrder);
     loadGPUWeights(coords);
     prepareClosestFrames(coords);
     loadGPUOffsets(coords);   
@@ -252,25 +250,24 @@ void Interpolator::interpolate(std::string outputPath, std::string coordinates, 
     dim3 dimBlock(16, 16, 1);
     dim3 dimGrid(resolution.x/dimBlock.x, resolution.y/dimBlock.y, 1);
 
-    int range = (inputRange > 0) ? inputRange : resolution.x/2;
-    auto focusMethod = parseMethod(method); 
+    int range = (params.scanRange > 0) ? params.scanRange : resolution.x/2;    
 
     std::cout << "Elapsed time: "<<std::endl;
     float avgTime{0};
-    for(int i=0; i<runs; i++)
+    for(int i=0; i<params.runs; i++)
     {
         Timer timer;
         Kernels::process<<<dimGrid, dimBlock, sharedSize>>>
-        (focusMethod, methodParameter, closestViews, blockSampling, 
+        (params.method, params.methodParameter, params.closestViews, params.blockSampling, 
         reinterpret_cast<cudaTextureObject_t*>(textureObjectsArr), reinterpret_cast<cudaSurfaceObject_t*>(surfaceObjectsArr),
         weightsGPU, closestFramesWeightsGPU, closestFramesCoordsLinearGPU, range);
         auto time = timer.stop();
         avgTime += time;
         std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
     }
-    std::cout << "Average of " << runs << " runs: " << avgTime/runs << " ms" << std::endl;
+    std::cout << "Average of " << params.runs << " runs: " << avgTime/params.runs << " ms" << std::endl;
 
-    storeResults(outputPath);
+    storeResults(params.outputPath);
 }
 
 void Interpolator::storeResults(std::string path)
