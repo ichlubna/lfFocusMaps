@@ -27,7 +27,19 @@ class Interpolator
             return this;
         }
         
-        InterpolationParams* setMethodParameter(float parameter)
+        InterpolationParams* setMetric(std::string inputMetric)
+        {
+            metric = parseMetric(inputMetric);
+            return this;
+        }
+        
+        InterpolationParams* setSpace(std::string inputSpace)
+        {
+            space = parseSpace(inputSpace);
+            return this;
+        }
+        
+        InterpolationParams* setMethodParameter(int parameter)
         {
             methodParameter = parameter; 
             return this;
@@ -80,7 +92,9 @@ class Interpolator
         std::string outputPath;
         glm::vec2 coordinates;
         FocusMethod method;
-        float methodParameter;
+        ScanSpace space;
+        ScanMetric metric;
+        int methodParameter;
         bool closestViews{false};
         bool blockSampling{false};
         int scanRange;
@@ -90,6 +104,8 @@ class Interpolator
         private:
         glm::vec2 parseCoordinates(std::string coordinates);
         FocusMethod parseMethod(std::string inputMethod);
+        ScanMetric parseMetric(std::string inputMetric);
+        ScanSpace parseSpace(std::string inputSpace);
     };
 
     Interpolator(std::string inputPath);
@@ -114,7 +130,7 @@ class Interpolator
     void init();
     void loadGPUOffsets(glm::vec2 viewCoordinates);
     void loadGPUData();
-    void loadGPUConstants(int distanceOrder);
+    void loadGPUConstants(InterpolationParams params);
     void loadGPUWeights(glm::vec2 viewCoordinates);
     int* loadImageToArray(const uint8_t *data, glm::ivec3 size);
     void storeResults(std::string path);

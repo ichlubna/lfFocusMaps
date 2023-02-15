@@ -11,8 +11,12 @@ int main(int argc, char **argv)
                           "-o - output path\n"
                           "-m - method:\n"
                           "     OD (one distance) - parameter: focusing distance in pixels\n"
-                          "     BF (brute force) - parameter: number of scanning steps\n"
+                          "     BF (brute force) - parameter: number of scanning steps (default)\n"
                           "-p - method parameter\n"
+                          "-e - scan metric to evaluate the color dispersion:\n"
+                          "     VAR - variance (default)\n"
+                          "-s - scan space - density of the sampling:\n"
+                          "     LIN - linear (default)\n"
                           "-b - block sampling - uses also neighboring pixels for matching\n"
                           "-f - use faster variant with only four closest views\n"
                           "-r - scanning range in pixels - the maximum disparity between input images, default is half of image width\n"
@@ -34,7 +38,9 @@ int main(int argc, char **argv)
         Interpolator::InterpolationParams params;
         params
         .setMethod(static_cast<std::string>(args["-m"]))
-        ->setMethodParameter(static_cast<float>(args["-p"]))
+        ->setMetric(static_cast<std::string>(args["-e"]))
+        ->setSpace(static_cast<std::string>(args["-s"]))
+        ->setMethodParameter(static_cast<int>(args["-p"]))
         ->setCoordinates(static_cast<std::string>(args["-c"]))
         ->setScanRange(static_cast<int>(args["-r"]))
         ->setOutputPath(static_cast<std::string>(args["-o"]))

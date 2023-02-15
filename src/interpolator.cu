@@ -101,6 +101,7 @@ void Interpolator::loadGPUData()
     LoadingBar bar(lfLoader.imageCount()+OUTPUT_SURFACE_COUNT);
 
     /*
+        FocusMethod parseMethod(std::string inputMethod);
     std::vector<cudaTextureObject_t> textures;
     for(int col=0; col<colsRows.x; col++)
         for(int row=0; row<colsRows.y; row++)
@@ -135,7 +136,7 @@ void Interpolator::loadGPUData()
     cudaMemcpy(surfaceObjectsArr, surfaces.data(), surfaces.size()*sizeof(cudaSurfaceObject_t), cudaMemcpyHostToDevice);
 }
 
-void Interpolator::loadGPUConstants(int distanceOrder)
+void Interpolator::loadGPUConstants(InterpolationParams params)
 {
     std::vector<int> values(ConstantIDs::CONSTANTS_COUNT);
     values[ConstantIDs::IMG_RES_X] = resolution.x;
@@ -143,8 +144,24 @@ void Interpolator::loadGPUConstants(int distanceOrder)
     values[ConstantIDs::GRID_SIZE] = colsRows.x*colsRows.y;
     values[ConstantIDs::COLS] = colsRows.x;
     values[ConstantIDs::ROWS] = colsRows.y;
-    values[ConstantIDs::DISTANCE_ORDER] = distanceOrder;
-    cudaMemcpyToSymbol(Kernels::constants, values.data(), values.size() * sizeof(int));
+    values[ConstantIDs::DISTANCE_ORDER] = params.distanceOrder;
+    values[ConstantIDs::SCAN_SPACE] = params.space;
+    values[ConstantIDs::SCAN_METRIC] = params.metric;
+    values[ConstantIDs::FOCUS_METHOD] = params.method;
+    values[ConstantIDs::FOCUS_METHOD_PARAMETER] = params.methodParameter;
+    values[ConstantIDs::CLOSEST_VIEWS] = params.closestViews;
+    values[ConstantIDs::BLOCK_SAMPLING] = params.blockSampling;
+    int range = (params.scanRange > 0) ? params.scanRange : resolution.x/2;    
+    values[ConstantIDs::RANGE] = range;
+    cudaMemcpyToSymbol(Kernels::Constants::constants, values.data(), values.size() * sizeof(int));
+
+    std::vector<void*> dataPointers(DataPointersIDs::POINTERS_COUNT);
+    dataPointers[DataPointersIDs::SURFACES] = reinterpret_cast<void*>(surfaceObjectsArr);
+    dataPointers[DataPointersIDs::TEXTURES] = reinterpret_cast<void*>(textureObjectsArr);
+    dataPointers[DataPointersIDs::WEIGHTS] = reinterpret_cast<void*>(weightsGPU);
+    dataPointers[DataPointersIDs::CLOSEST_WEIGHTS] = reinterpret_cast<void*>(closestFramesWeightsGPU);
+    dataPointers[DataPointersIDs::CLOSEST_COORDS] = reinterpret_cast<void*>(closestFramesCoordsLinearGPU);
+    cudaMemcpyToSymbol(Kernels::Constants::dataPointers, dataPointers.data(), dataPointers.size() * sizeof(void*));
 }
 
 void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
@@ -230,6 +247,20 @@ void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
     cudaMemcpy(closestFramesWeightsGPU, closestFramesWeights.data(), closestFramesWeights.size()*sizeof(float), cudaMemcpyHostToDevice);
 }
 
+ScanMetric Interpolator::InterpolationParams::parseMetric(std::string metric)
+{
+    if(metric == "VAR")
+        return ScanMetric::VARIANCE;
+    return ScanMetric::VARIANCE;
+}
+ 
+ScanSpace Interpolator::InterpolationParams::parseSpace(std::string space)
+{
+    if(space == "LIN")
+        return ScanSpace::LINEAR;
+    return ScanSpace::LINEAR;
+} 
+
 FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method)
 {
     if(method == "OD")
@@ -242,25 +273,20 @@ FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method)
 void Interpolator::interpolate(InterpolationParams params)
 {
     glm::vec2 coords = glm::vec2(colsRows-1)*params.coordinates;
-    loadGPUConstants(params.distanceOrder);
     loadGPUWeights(coords);
     prepareClosestFrames(coords);
     loadGPUOffsets(coords);   
+    loadGPUConstants(params);
     
     dim3 dimBlock(16, 16, 1);
     dim3 dimGrid(resolution.x/dimBlock.x, resolution.y/dimBlock.y, 1);
-
-    int range = (params.scanRange > 0) ? params.scanRange : resolution.x/2;    
 
     std::cout << "Elapsed time: "<<std::endl;
     float avgTime{0};
     for(int i=0; i<params.runs; i++)
     {
         Timer timer;
-        Kernels::process<<<dimGrid, dimBlock, sharedSize>>>
-        (params.method, params.methodParameter, params.closestViews, params.blockSampling, 
-        reinterpret_cast<cudaTextureObject_t*>(textureObjectsArr), reinterpret_cast<cudaSurfaceObject_t*>(surfaceObjectsArr),
-        weightsGPU, closestFramesWeightsGPU, closestFramesCoordsLinearGPU, range);
+        Kernels::process<<<dimGrid, dimBlock, sharedSize>>>();
         auto time = timer.stop();
         avgTime += time;
         std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
