@@ -33,9 +33,9 @@ class Interpolator
             return this;
         }
         
-        InterpolationParams* setSpace(std::string inputSpace)
+        InterpolationParams* setSpace(float inputSpace)
         {
-            space = parseSpace(inputSpace);
+            space = inputSpace;
             return this;
         }
         
@@ -54,6 +54,12 @@ class Interpolator
         InterpolationParams* setBlockSampling(bool block=true)
         {
             blockSampling = block;
+            return this;
+        }
+        
+        InterpolationParams* setYUVDistance(bool yuv=true)
+        {
+            YUVDistance = yuv;
             return this;
         }
 
@@ -92,11 +98,12 @@ class Interpolator
         std::string outputPath;
         glm::vec2 coordinates;
         FocusMethod method;
-        ScanSpace space;
+        float space;
         ScanMetric metric;
         int methodParameter;
         bool closestViews{false};
         bool blockSampling{false};
+        bool YUVDistance{false};
         int scanRange;
         int distanceOrder{1};
         int runs{1};
@@ -105,7 +112,6 @@ class Interpolator
         glm::vec2 parseCoordinates(std::string coordinates);
         FocusMethod parseMethod(std::string inputMethod);
         ScanMetric parseMetric(std::string inputMetric);
-        ScanSpace parseSpace(std::string inputSpace);
     };
 
     Interpolator(std::string inputPath);

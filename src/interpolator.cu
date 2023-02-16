@@ -138,22 +138,26 @@ void Interpolator::loadGPUData()
 
 void Interpolator::loadGPUConstants(InterpolationParams params)
 {
-    std::vector<int> values(ConstantIDs::CONSTANTS_COUNT);
-    values[ConstantIDs::IMG_RES_X] = resolution.x;
-    values[ConstantIDs::IMG_RES_Y] = resolution.y;
-    values[ConstantIDs::GRID_SIZE] = colsRows.x*colsRows.y;
-    values[ConstantIDs::COLS] = colsRows.x;
-    values[ConstantIDs::ROWS] = colsRows.y;
-    values[ConstantIDs::DISTANCE_ORDER] = params.distanceOrder;
-    values[ConstantIDs::SCAN_SPACE] = params.space;
-    values[ConstantIDs::SCAN_METRIC] = params.metric;
-    values[ConstantIDs::FOCUS_METHOD] = params.method;
-    values[ConstantIDs::FOCUS_METHOD_PARAMETER] = params.methodParameter;
-    values[ConstantIDs::CLOSEST_VIEWS] = params.closestViews;
-    values[ConstantIDs::BLOCK_SAMPLING] = params.blockSampling;
+    std::vector<int> intValues(IntConstantIDs::INT_CONSTANTS_COUNT);
+    intValues[IntConstantIDs::IMG_RES_X] = resolution.x;
+    intValues[IntConstantIDs::IMG_RES_Y] = resolution.y;
+    intValues[IntConstantIDs::GRID_SIZE] = colsRows.x*colsRows.y;
+    intValues[IntConstantIDs::COLS] = colsRows.x;
+    intValues[IntConstantIDs::ROWS] = colsRows.y;
+    intValues[IntConstantIDs::DISTANCE_ORDER] = params.distanceOrder;
+    intValues[IntConstantIDs::SCAN_METRIC] = params.metric;
+    intValues[IntConstantIDs::FOCUS_METHOD] = params.method;
+    intValues[IntConstantIDs::FOCUS_METHOD_PARAMETER] = params.methodParameter;
+    intValues[IntConstantIDs::CLOSEST_VIEWS] = params.closestViews;
+    intValues[IntConstantIDs::BLOCK_SAMPLING] = params.blockSampling;
+    intValues[IntConstantIDs::YUV_DISTANCE] = params.YUVDistance;
     int range = (params.scanRange > 0) ? params.scanRange : resolution.x/2;    
-    values[ConstantIDs::RANGE] = range;
-    cudaMemcpyToSymbol(Kernels::Constants::constants, values.data(), values.size() * sizeof(int));
+    intValues[IntConstantIDs::RANGE] = range;
+    cudaMemcpyToSymbol(Kernels::Constants::intConstants, intValues.data(), intValues.size() * sizeof(int));
+    
+    std::vector<float> floatValues(FloatConstantIDs::FLOAT_CONSTANTS_COUNT);
+    floatValues[FloatConstantIDs::SPACE] = params.space;
+    cudaMemcpyToSymbol(Kernels::Constants::floatConstants, floatValues.data(), floatValues.size() * sizeof(float));
 
     std::vector<void*> dataPointers(DataPointersIDs::POINTERS_COUNT);
     dataPointers[DataPointersIDs::SURFACES] = reinterpret_cast<void*>(surfaceObjectsArr);
@@ -251,22 +255,17 @@ ScanMetric Interpolator::InterpolationParams::parseMetric(std::string metric)
 {
     if(metric == "VAR")
         return ScanMetric::VARIANCE;
+    std::cerr << "Scan metric set to default." << std::endl;
     return ScanMetric::VARIANCE;
 }
  
-ScanSpace Interpolator::InterpolationParams::parseSpace(std::string space)
-{
-    if(space == "LIN")
-        return ScanSpace::LINEAR;
-    return ScanSpace::LINEAR;
-} 
-
 FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method)
 {
     if(method == "OD")
         return FocusMethod::ONE_DISTANCE;
     else if(method == "BF")
         return FocusMethod::BRUTE_FORCE;
+    std::cerr << "Scan method set to default." << std::endl;
     return FocusMethod::BRUTE_FORCE;
 } 
 

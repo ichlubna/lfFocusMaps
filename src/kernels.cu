@@ -11,24 +11,28 @@ namespace Kernels
 
     namespace Constants
     {
-        __constant__ int constants[ConstantIDs::CONSTANTS_COUNT];
+        __constant__ int intConstants[IntConstantIDs::INT_CONSTANTS_COUNT];
+        __device__ int2 imgRes(){return {intConstants[IntConstantIDs::IMG_RES_X], intConstants[IntConstantIDs::IMG_RES_Y]};}
+        __device__ int2 colsRows(){return{intConstants[IntConstantIDs::COLS], intConstants[IntConstantIDs::ROWS]};}
+        __device__ int gridSize(){return intConstants[IntConstantIDs::GRID_SIZE];}
+        __device__ int distanceOrder(){return intConstants[IntConstantIDs::DISTANCE_ORDER];}
+        __device__ ScanMetric scanMetric(){return static_cast<ScanMetric>(intConstants[IntConstantIDs::SCAN_METRIC]);}
+        __device__ FocusMethod focusMethod(){return static_cast<FocusMethod>(intConstants[IntConstantIDs::FOCUS_METHOD]);}
+        __device__ int focusMethodParameter(){return intConstants[IntConstantIDs::FOCUS_METHOD_PARAMETER];}
+        __device__ int scanRange(){return intConstants[IntConstantIDs::RANGE];}
+        __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
+        __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
+        __device__ bool YUVDistance(){return intConstants[IntConstantIDs::YUV_DISTANCE];}
+        
         __constant__ void* dataPointers[DataPointersIDs::POINTERS_COUNT];
-        __device__ int2 imgRes(){return {constants[ConstantIDs::IMG_RES_X], constants[ConstantIDs::IMG_RES_Y]};}
-        __device__ int2 colsRows(){return{constants[ConstantIDs::COLS], constants[ConstantIDs::ROWS]};}
-        __device__ int gridSize(){return constants[ConstantIDs::GRID_SIZE];}
-        __device__ int distanceOrder(){return constants[ConstantIDs::DISTANCE_ORDER];}
-        __device__ ScanSpace scanSpace(){return static_cast<ScanSpace>(constants[ConstantIDs::SCAN_SPACE]);}
-        __device__ ScanMetric scanMetric(){return static_cast<ScanMetric>(constants[ConstantIDs::SCAN_METRIC]);}
-        __device__ FocusMethod focusMethod(){return static_cast<FocusMethod>(constants[ConstantIDs::FOCUS_METHOD]);}
-        __device__ int focusMethodParameter(){return constants[ConstantIDs::FOCUS_METHOD_PARAMETER];}
-        __device__ int scanRange(){return constants[ConstantIDs::RANGE];}
-        __device__ bool closestViews(){return constants[ConstantIDs::CLOSEST_VIEWS];}
-        __device__ bool blockSampling(){return constants[ConstantIDs::BLOCK_SAMPLING];}
         __device__ cudaSurfaceObject_t* surfaces(){return reinterpret_cast<cudaSurfaceObject_t*>(dataPointers[DataPointersIDs::SURFACES]);}
         __device__ cudaTextureObject_t* textures(){return reinterpret_cast<cudaTextureObject_t*>(dataPointers[DataPointersIDs::TEXTURES]);}
         __device__ float* closestWeights(){return reinterpret_cast<float*>(dataPointers[DataPointersIDs::CLOSEST_WEIGHTS]);}
         __device__ float* weights(){return reinterpret_cast<float*>(dataPointers[DataPointersIDs::WEIGHTS]);}
         __device__ int* closestCoords(){return reinterpret_cast<int*>(dataPointers[DataPointersIDs::CLOSEST_COORDS]);}
+        
+        __constant__ float floatConstants[FloatConstantIDs::FLOAT_CONSTANTS_COUNT];
+        __device__ float scanSpace(){return floatConstants[FloatConstantIDs::SPACE];}
     }
 
     __device__ constexpr int MAX_IMAGES{256};
@@ -214,10 +218,28 @@ namespace Kernels
    
     namespace Pixel
     {
+        //source: https://learn.microsoft.com/en-us/windows/win32/medfound/recommended-8-bit-yuv-formats-for-video-rendering
+        __device__ uchar4 RGBtoYUV(uchar4 rgb)
+        {
+            uchar4 yuv;
+            yuv.x = ( (  66 * rgb.x + 129 * rgb.y +  25 * rgb.z + 128) >> 8) +  16;
+            yuv.y = ( ( -38 * rgb.x -  74 * rgb.y + 112 * rgb.z + 128) >> 8) + 128;
+            yuv.z = ( ( 112 * rgb.x -  94 * rgb.y -  18 * rgb.z + 128) >> 8) + 128;
+            return yuv;
+        }
+
         template <typename T>
         __device__ float distance(PixelArray<T> a, PixelArray<T> b)
         {
-            float dist = max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2])); 
+            float dist{0};
+            if(Constants::YUVDistance())
+            {
+                auto yuvA = RGBtoYUV(a.uch4());
+                auto yuvB = RGBtoYUV(b.uch4());
+                dist = max(max(abs(yuvA.x-yuvB.x)>>2, abs(yuvA.y-yuvB.y)), abs(yuvA.z-yuvB.z));
+            }
+            else
+                dist = max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
             return __powf (dist, Constants::distanceOrder());
         }
 
@@ -268,7 +290,9 @@ namespace Kernels
                n++;
                PixelArray<T> delta = val-m;
                m += delta/static_cast<T>(n);
-               m2 += distance * Pixel::distance(m, val);
+               //m2 += distance * Pixel::distance(m, val);
+               m2 = __fmaf_rn(distance, Pixel::distance(m, val), m2);
+
             }
             __device__ float variance()
             {
@@ -289,18 +313,14 @@ namespace Kernels
         return coords;
     }
 
-    __device__ int transformFocus(int focus, int range, ScanSpace space)
+    __device__ int transformFocus(int focus, int range, float space)
     {
-        switch(space)
+        if(space != 1.0f)
         {
-            case ScanSpace::LINEAR:
-                return focus;
-            break;
-            
-            default:
-                return focus;
-            break;
+            float normalized = static_cast<float>(focus)/range;
+            return round(__powf(normalized, space)*range);
         }
+        return focus;
     }
 
     namespace FocusLevel
@@ -351,22 +371,41 @@ namespace Kernels
                 finalVariance += variance[blockPx].variance();
             return finalVariance;
         }
-         
+
+        template<typename...TAIL>
+        typename std::enable_if_t<sizeof...(TAIL)==0,void> 
+        __device__ call(int,ScanMetric,int2,int){}
+
+        template<typename H, int blockSize, bool closest, typename...TAIL>
+        __device__ float call(int n,ScanMetric type, int2 coords, int focus)
+        {
+            if(n==type)
+                return evaluateDispersion<H, blockSize, closest>(coords, focus);
+            call<TAIL...>(n+1,type, coords, focus);
+        }
+
+        template<int blockSize, bool closest=false>
+        __device__ float dispersion(ScanMetric t, int2 coords, int focus)
+        {
+            return call<ScanMetrics::OnlineVariance<float>, blockSize, closest>(0,t, coords, focus);
+        }
+
         __device__ float evaluate(int2 coords, int focus)
         {
             auto closestViews = Constants::closestViews(); 
             auto blockSampling = Constants::blockSampling();
+            auto scanMetric = Constants::scanMetric();
  
             if(closestViews)
                 if(blockSampling)
-                    return evaluateDispersion<ScanMetrics::OnlineVariance<float>, BLOCK_SAMPLE_COUNT, true>(coords, focus);
+                    return dispersion<BLOCK_SAMPLE_COUNT, true>(scanMetric, coords, focus);
                 else
-                    return evaluateDispersion<ScanMetrics::OnlineVariance<float>, PIXEL_SAMPLE_COUNT, true>(coords, focus);
+                    return dispersion<PIXEL_SAMPLE_COUNT, true>(scanMetric, coords, focus);
             else
                 if(blockSampling)
-                    return evaluateDispersion<ScanMetrics::OnlineVariance<float>, BLOCK_SAMPLE_COUNT>(coords, focus);
+                    return dispersion<BLOCK_SAMPLE_COUNT>(scanMetric, coords, focus);
                 else
-                    return evaluateDispersion<ScanMetrics::OnlineVariance<float>, PIXEL_SAMPLE_COUNT>(coords, focus);
+                    return dispersion<PIXEL_SAMPLE_COUNT>(scanMetric, coords, focus);
         }
        
         template<bool closest=false>

@@ -15,8 +15,8 @@ int main(int argc, char **argv)
                           "-p - method parameter\n"
                           "-e - scan metric to evaluate the color dispersion:\n"
                           "     VAR - variance (default)\n"
-                          "-s - scan space - density of the sampling:\n"
-                          "     LIN - linear (default)\n"
+                          "-s   scan space - density of the sampling by exponential function y=x^s, default s=1\n"
+                          "-y   use weighted YUV color distance\n"
                           "-b - block sampling - uses also neighboring pixels for matching\n"
                           "-f - use faster variant with only four closest views\n"
                           "-r - scanning range in pixels - the maximum disparity between input images, default is half of image width\n"
@@ -39,7 +39,7 @@ int main(int argc, char **argv)
         params
         .setMethod(static_cast<std::string>(args["-m"]))
         ->setMetric(static_cast<std::string>(args["-e"]))
-        ->setSpace(static_cast<std::string>(args["-s"]))
+        ->setSpace(static_cast<float>(args["-s"]))
         ->setMethodParameter(static_cast<int>(args["-p"]))
         ->setCoordinates(static_cast<std::string>(args["-c"]))
         ->setScanRange(static_cast<int>(args["-r"]))
@@ -47,7 +47,8 @@ int main(int argc, char **argv)
         ->setRuns(std::stoi(static_cast<std::string>(args["-t"])))
         ->setDistanceOrder(static_cast<int>(args["-d"]))
         ->setBlockSampling(static_cast<bool>(args["-b"]))
-        ->setClosestViews(static_cast<bool>(args["-f"]));
+        ->setClosestViews(static_cast<bool>(args["-f"]))
+        ->setYUVDistance(static_cast<bool>(args["-y"]));
         interpolator.interpolate(params);
     }
     catch(const std::exception &e)
