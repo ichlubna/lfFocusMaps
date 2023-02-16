@@ -60,9 +60,10 @@ int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
     texRes.res.array.array = arr;
     cudaTextureDesc texDescr;
     memset(&texDescr, 0, sizeof(cudaTextureDesc));
+    texDescr.filterMode = cudaFilterModeLinear;
     texDescr.addressMode[0] = cudaAddressModeClamp;
     texDescr.addressMode[1] = cudaAddressModeClamp;
-    texDescr.readMode = cudaReadModeElementType;
+    texDescr.readMode = cudaReadModeNormalizedFloat;
     cudaTextureObject_t texObj{0};
     cudaCreateTextureObject(&texObj, &texRes, &texDescr, NULL);
     return texObj;
@@ -100,8 +101,7 @@ void Interpolator::loadGPUData()
     std::cout << "Uploading data to GPU..." << std::endl;
     LoadingBar bar(lfLoader.imageCount()+OUTPUT_SURFACE_COUNT);
 
-    /*
-        FocusMethod parseMethod(std::string inputMethod);
+    
     std::vector<cudaTextureObject_t> textures;
     for(int col=0; col<colsRows.x; col++)
         for(int row=0; row<colsRows.y; row++)
@@ -111,12 +111,10 @@ void Interpolator::loadGPUData()
         }
 
     cudaMalloc(&textureObjectsArr, textures.size()*sizeof(cudaTextureObject_t));
-    cudaMemcpy(textureObjectsArr, textures.data(), textures.size()*sizeof(cudaTextureObject_t), cudaMemcpyHostToDevice);
-    */
-
-    
+    cudaMemcpy(textureObjectsArr, textures.data(), textures.size()*sizeof(cudaTextureObject_t), cudaMemcpyHostToDevice); 
+ 
     std::vector<cudaSurfaceObject_t> surfaces;
-    for(int col=0; col<colsRows.x; col++)
+/*    for(int col=0; col<colsRows.x; col++)
         for(int row=0; row<colsRows.y; row++)
         {
             auto surface = createSurfaceObject(resolution, lfLoader.image({col, row}).data());
@@ -124,7 +122,7 @@ void Interpolator::loadGPUData()
             surfaceInputArrays.push_back(surface.second);
             bar.add();
         }
-
+*/
     for(int i=0; i<OUTPUT_SURFACE_COUNT; i++)
     {
         auto surface = createSurfaceObject(resolution);
@@ -152,7 +150,7 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     intValues[IntConstantIDs::BLOCK_SAMPLING] = params.blockSampling;
     intValues[IntConstantIDs::YUV_DISTANCE] = params.YUVDistance;
     int range = (params.scanRange > 0) ? params.scanRange : resolution.x/2;    
-    intValues[IntConstantIDs::RANGE] = range;
+    intValues[IntConstantIDs::SCAN_RANGE] = range;
     cudaMemcpyToSymbol(Kernels::Constants::intConstants, intValues.data(), intValues.size() * sizeof(int));
     
     std::vector<float> floatValues(FloatConstantIDs::FLOAT_CONSTANTS_COUNT);
@@ -255,6 +253,8 @@ ScanMetric Interpolator::InterpolationParams::parseMetric(std::string metric)
 {
     if(metric == "VAR")
         return ScanMetric::VARIANCE;
+    if(metric == "RANGE")
+        return ScanMetric::RANGE;
     std::cerr << "Scan metric set to default." << std::endl;
     return ScanMetric::VARIANCE;
 }

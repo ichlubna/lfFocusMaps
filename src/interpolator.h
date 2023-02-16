@@ -35,7 +35,10 @@ class Interpolator
         
         InterpolationParams* setSpace(float inputSpace)
         {
-            space = inputSpace;
+            if(inputSpace == 0)
+                space = 1;
+            else
+                space = inputSpace;
             return this;
         }
         

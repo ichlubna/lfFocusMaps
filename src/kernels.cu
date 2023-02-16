@@ -19,7 +19,7 @@ namespace Kernels
         __device__ ScanMetric scanMetric(){return static_cast<ScanMetric>(intConstants[IntConstantIDs::SCAN_METRIC]);}
         __device__ FocusMethod focusMethod(){return static_cast<FocusMethod>(intConstants[IntConstantIDs::FOCUS_METHOD]);}
         __device__ int focusMethodParameter(){return intConstants[IntConstantIDs::FOCUS_METHOD_PARAMETER];}
-        __device__ int scanRange(){return intConstants[IntConstantIDs::RANGE];}
+        __device__ int scanRange(){return intConstants[IntConstantIDs::SCAN_RANGE];}
         __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
         __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
         __device__ bool YUVDistance(){return intConstants[IntConstantIDs::YUV_DISTANCE];}
@@ -95,6 +95,7 @@ namespace Kernels
             public:
             __device__ PixelArray(){};
             __device__ PixelArray(uchar4 pixel) : channels{T(pixel.x), T(pixel.y), T(pixel.z), T(pixel.w)}{};
+            __device__ PixelArray(float4 pixel) : channels{T(pixel.x), T(pixel.y), T(pixel.z), T(pixel.w)}{};
             T channels[CHANNEL_COUNT]{0,0,0,0};
             __device__ T& operator[](int index){return channels[index];}
           
@@ -103,7 +104,7 @@ namespace Kernels
                 uchar4 result;
                 auto data = reinterpret_cast<unsigned char*>(&result);
                 for(int i=0; i<CHANNEL_COUNT; i++)
-                    data[i] = __half2int_rn(channels[i]);
+                    data[i] = __float2int_rn(channels[i]);
                 return result;
             }
            
@@ -146,6 +147,13 @@ namespace Kernels
             {
                 for(int j=0; j<CHANNEL_COUNT; j++)
                     this->channels[j] /= value;
+                return *this;
+            }
+            
+            __device__ PixelArray<T> operator*(const T &value)
+            {
+                for(int j=0; j<CHANNEL_COUNT; j++)
+                    this->channels[j] *= value;
                 return *this;
             }
         };
@@ -246,12 +254,12 @@ namespace Kernels
         __device__ void store(uchar4 px, int imageID, int2 coords)
         {
             if constexpr (GUESS_HANDLES)
-                surf2Dwrite<uchar4>(px, imageID+1+Constants::gridSize(), coords.x*sizeof(uchar4), coords.y);
+                surf2Dwrite<uchar4>(px, imageID+1, coords.x*sizeof(uchar4), coords.y);
             else    
-                surf2Dwrite<uchar4>(px, Constants::surfaces()[imageID+Constants::gridSize()], coords.x*sizeof(uchar4), coords.y);
+                surf2Dwrite<uchar4>(px, Constants::surfaces()[imageID], coords.x*sizeof(uchar4), coords.y);
         }
 
-        template <typename T>
+ /*       template <typename T>
         __device__ PixelArray<T> load(int imageID, int2 coords)
         {
             constexpr int MULT_FOUR_SHIFT{2};
@@ -260,17 +268,17 @@ namespace Kernels
             else    
                 return PixelArray<T>{surf2Dread<uchar4>(Constants::surfaces()[imageID], coords.x<<MULT_FOUR_SHIFT, coords.y, cudaBoundaryModeClamp)};
         }
-       
-        /* 
+   */    
+         
         template <typename T>
-        __device__ PixelArray<T> loadPx(int imageID, float2 coords)
+        __device__ PixelArray<T> load(int imageID, float2 coords)
         {
             if constexpr (GUESS_HANDLES)
-                return PixelArray<T>{tex2D<uchar4>(imageID+1, coords.x+0.5f, coords.y+0.5f)};
+                return PixelArray<T>{tex2D<float4>(imageID+1, coords.x, coords.y)}*UCHAR_MAX;
             else    
-                return PixelArray<T>{tex2D<uchar4>(textures()[imageID], coords.x, coords.y)};
+                return PixelArray<T>{tex2D<float4>(Constants::textures()[imageID], coords.x, coords.y)}*UCHAR_MAX;
         }
-        */
+        
     }
 
     namespace ScanMetrics
@@ -294,7 +302,7 @@ namespace Kernels
                m2 = __fmaf_rn(distance, Pixel::distance(m, val), m2);
 
             }
-            __device__ float variance()
+            __device__ float dispersionAmount()
             {
                 return m2/(n-1);    
             }      
@@ -304,45 +312,75 @@ namespace Kernels
               return *this;
             }
         };
+        
+        template <typename T>
+        class Range
+        {
+            private:
+            int3 minCol{INT_MAX, INT_MAX, INT_MAX};
+            int3 maxCol{INT_MIN, INT_MIN, INT_MIN};
+            
+            public:
+            __device__ void add(PixelArray<T> val)
+            {
+                auto color = val.uch4();
+                minCol.x = min(minCol.x,color.x);
+                minCol.y = min(minCol.y,color.y);
+                minCol.z = min(minCol.z,color.z);
+                maxCol.x = max(maxCol.x,color.x);
+                maxCol.y = max(maxCol.y,color.y);
+                maxCol.z = max(maxCol.z,color.z);
+            }
+            __device__ float dispersionAmount()
+            {
+                return (maxCol.x-minCol.x) + (maxCol.y-minCol.y) + (maxCol.z-minCol.z);  
+                //return fmaxf(fmaxf(max.x-min.x,max.y-min.y),max.z-min.z);    
+            }      
+            __device__ Range& operator+=(const PixelArray<T>& rhs){
+
+              add(rhs);
+              return *this;
+            }
+        };
     }
 
-    __device__ int2 focusCoords(int gridID, int2 pxCoords, int focus)
+    __device__ float2 focusCoords(int gridID, int2 pxCoords, float focus)
     {
         float2 offset = offsets[gridID];
-        int2 coords{static_cast<int>(pxCoords.x-round(offset.x*focus)), static_cast<int>(round(pxCoords.y-offset.y*focus))};
+        float2 coords{pxCoords.x-offset.x*focus, pxCoords.y-offset.y*focus};
         return coords;
     }
 
-    __device__ int transformFocus(int focus, int range, float space)
+    __device__ float transformFocus(float focus, int range, float space)
     {
         if(space != 1.0f)
         {
-            float normalized = static_cast<float>(focus)/range;
-            return round(__powf(normalized, space)*range);
+            float normalized = focus/range;
+            return __powf(normalized, space)*range;
         }
         return focus;
     }
 
     namespace FocusLevel
     {      
-        template<int blockSize> 
-        __device__ void evaluateBlock(int gridID, int focus, int2 coords, ScanMetrics::OnlineVariance<float> *variances)
+        template<int blockSize, typename T> 
+        __device__ void evaluateBlock(int gridID, float focus, int2 coords, T *dispersions)
         {
-            int transformedFocus = transformFocus(focus, Constants::scanRange(), Constants::scanSpace());
+            float transformedFocus = transformFocus(focus, Constants::scanRange(), Constants::scanSpace());
             const int2 BLOCK_OFFSETS[]{ {0,0}, {-1,1}, {1,1}, {-1,-1}, {1,-1} };//, {0,0}, {0,1}, {0,-1}, {-1,0}, {1,0} };
             for(int blockPx=0; blockPx<blockSize; blockPx++)
             {
                 int2 inBlockCoords{coords.x+BLOCK_OFFSETS[blockPx].x, coords.y+BLOCK_OFFSETS[blockPx].y};
                 auto px{Pixel::load<float>(gridID, focusCoords(gridID, inBlockCoords, transformedFocus))};
-                variances[blockPx] += px;
+                dispersions[blockPx] += px;
             }
         }
 
         template<typename T, int blockSize, bool closest=false>
-        __device__ float evaluateDispersion(int2 coords, int focus)
+        __device__ float evaluateDispersion(int2 coords, float focus)
         {
             auto cr = Constants::colsRows();
-            T variance[blockSize];
+            T dispersionCalc[blockSize];
                 
             int gridID = 0;
 
@@ -352,7 +390,7 @@ namespace Kernels
                 for(int i=0; i<CLOSEST_COUNT; i++) 
                 {     
                     int gridID = closestCoords[i];
-                    evaluateBlock<blockSize>(gridID, focus, coords, variance);
+                    evaluateBlock<blockSize>(gridID, focus, coords, dispersionCalc);
                 }           
             }
             else
@@ -361,36 +399,38 @@ namespace Kernels
                     gridID = row*cr.x;
                     for(int col=0; col<cr.x; col++) 
                     {
-                        evaluateBlock<blockSize>(gridID, focus, coords, variance);
+                        evaluateBlock<blockSize>(gridID, focus, coords, dispersionCalc);
                         gridID++;
                     }
                 }
 
-            float finalVariance{0};
+            float finalDispersion{0};
             for(int blockPx=0; blockPx<blockSize; blockPx++)
-                finalVariance += variance[blockPx].variance();
-            return finalVariance;
+                finalDispersion += dispersionCalc[blockPx].dispersionAmount();
+            //if(coords.x == 300 && 300 == coords.y)
+            //    printf("%f %f \n", focus, finalDispersion );
+            return finalDispersion;
         }
 
-        template<typename...TAIL>
+        template<int blockSize, bool closest, typename...TAIL>
         typename std::enable_if_t<sizeof...(TAIL)==0,void> 
         __device__ call(int,ScanMetric,int2,int){}
 
-        template<typename H, int blockSize, bool closest, typename...TAIL>
-        __device__ float call(int n,ScanMetric type, int2 coords, int focus)
+        template<int blockSize, bool closest, typename H, typename...TAIL>
+        __device__ float call(int n,ScanMetric type, int2 coords, float focus)
         {
             if(n==type)
                 return evaluateDispersion<H, blockSize, closest>(coords, focus);
-            call<TAIL...>(n+1,type, coords, focus);
+            call<blockSize, closest, TAIL...>(n+1,type, coords, focus);
         }
 
         template<int blockSize, bool closest=false>
-        __device__ float dispersion(ScanMetric t, int2 coords, int focus)
+        __device__ float dispersion(ScanMetric t, int2 coords, float focus)
         {
-            return call<ScanMetrics::OnlineVariance<float>, blockSize, closest>(0,t, coords, focus);
+            return call<blockSize, closest, ScanMetrics::OnlineVariance<float>, ScanMetrics::Range<float>>(0,t, coords, focus);
         }
 
-        __device__ float evaluate(int2 coords, int focus)
+        __device__ float evaluate(int2 coords, float focus)
         {
             auto closestViews = Constants::closestViews(); 
             auto blockSampling = Constants::blockSampling();
@@ -409,7 +449,7 @@ namespace Kernels
         }
        
         template<bool closest=false>
-        __device__ uchar4 render(int2 coords, int focus)
+        __device__ uchar4 render(int2 coords, float focus)
         {
             auto cr = Constants::colsRows();
             PixelArray<float> sum;
@@ -451,17 +491,16 @@ namespace Kernels
             int steps = Constants::focusMethodParameter();
             float stepSize{static_cast<float>(Constants::scanRange())/steps};
             float focus{0.0f};
-            float minVariance{FLT_MAX};
-            int optimalFocus{0};
+            float minDispersion{FLT_MAX};
+            float optimalFocus{0};
             
             for(int step=0; step<steps; step++)
             {
-                int pxFocus = round(focus);
-                float variance = FocusLevel::evaluate(coords, pxFocus);
-                if(variance < minVariance)
+                float dispersion = FocusLevel::evaluate(coords, focus);
+                if(dispersion < minDispersion)
                 {
-                   minVariance = variance;
-                   optimalFocus = pxFocus; 
+                   minDispersion = dispersion;
+                   optimalFocus = focus; 
                 }
                 focus += stepSize;  
             }
@@ -479,7 +518,7 @@ namespace Kernels
         //auto localWeights = memoryPartitioner.array(gridSize());
         //loadWeightsSync<half>(weights, localWeights.data, gridSize()/2);
 
-        int focus{0};
+        float focus{0};
         switch(Constants::focusMethod())
         {
             case ONE_DISTANCE:
@@ -499,7 +538,7 @@ namespace Kernels
         else
             color = FocusLevel::render(coords, focus);
 
-        unsigned char focusColor = (static_cast<float>(focus)/Constants::scanRange())*UCHAR_MAX;
+        unsigned char focusColor = (focus/Constants::scanRange())*UCHAR_MAX;
         Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, coords);
         Pixel::store(color, FileNames::RENDER_IMAGE, coords);
     }

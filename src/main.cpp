@@ -15,6 +15,7 @@ int main(int argc, char **argv)
                           "-p - method parameter\n"
                           "-e - scan metric to evaluate the color dispersion:\n"
                           "     VAR - variance (default)\n"
+                          "     RANGE - elementwise distances between the colors\n"
                           "-s   scan space - density of the sampling by exponential function y=x^s, default s=1\n"
                           "-y   use weighted YUV color distance\n"
                           "-b - block sampling - uses also neighboring pixels for matching\n"
