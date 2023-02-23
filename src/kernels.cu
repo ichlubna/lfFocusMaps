@@ -344,7 +344,8 @@ namespace Kernels
         };
     }
 
-    __device__ float2 focusCoords(int gridID, int2 pxCoords, float focus)
+    template<typename T>
+    __device__ float2 focusCoords(int gridID, T pxCoords, float focus)
     {
         float2 offset = offsets[gridID];
         float2 coords{pxCoords.x-offset.x*focus, pxCoords.y-offset.y*focus};
@@ -367,10 +368,10 @@ namespace Kernels
         __device__ void evaluateBlock(int gridID, float focus, int2 coords, T *dispersions)
         {
             float transformedFocus = transformFocus(focus, Constants::scanRange(), Constants::scanSpace());
-            const int2 BLOCK_OFFSETS[]{ {0,0}, {-1,1}, {1,1}, {-1,-1}, {1,-1} };//, {0,0}, {0,1}, {0,-1}, {-1,0}, {1,0} };
+            const float2 BLOCK_OFFSETS[]{ {0,0}, {-1,0.5}, {0.5, 1}, {1,-0.5}, {-0.5,-1} };
             for(int blockPx=0; blockPx<blockSize; blockPx++)
             {
-                int2 inBlockCoords{coords.x+BLOCK_OFFSETS[blockPx].x, coords.y+BLOCK_OFFSETS[blockPx].y};
+                float2 inBlockCoords{coords.x+BLOCK_OFFSETS[blockPx].x, coords.y+BLOCK_OFFSETS[blockPx].y};
                 auto px{Pixel::load<float>(gridID, focusCoords(gridID, inBlockCoords, transformedFocus))};
                 dispersions[blockPx] += px;
             }
@@ -407,21 +408,19 @@ namespace Kernels
             float finalDispersion{0};
             for(int blockPx=0; blockPx<blockSize; blockPx++)
                 finalDispersion += dispersionCalc[blockPx].dispersionAmount();
-            //if(coords.x == 300 && 300 == coords.y)
-            //    printf("%f %f \n", focus, finalDispersion );
             return finalDispersion;
         }
 
         template<int blockSize, bool closest, typename...TAIL>
-        typename std::enable_if_t<sizeof...(TAIL)==0,void> 
-        __device__ call(int,ScanMetric,int2,int){}
+        __device__ typename std::enable_if_t<sizeof...(TAIL)==0, float> 
+        call(int,ScanMetric,int2,float){}
 
         template<int blockSize, bool closest, typename H, typename...TAIL>
         __device__ float call(int n,ScanMetric type, int2 coords, float focus)
         {
             if(n==type)
                 return evaluateDispersion<H, blockSize, closest>(coords, focus);
-            call<blockSize, closest, TAIL...>(n+1,type, coords, focus);
+            return call<blockSize, closest, TAIL...>(n+1,type, coords, focus);
         }
 
         template<int blockSize, bool closest=false>

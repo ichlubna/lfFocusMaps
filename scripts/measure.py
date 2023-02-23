@@ -29,15 +29,9 @@ def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRa
         command += " -y "
     return command
 
-def loadDir(path):
-    files = sorted(os.listdir(path))
-    length = Path(files[-1]).stem.split("_")
-    self.files = [files[i:i+self.cols] for i in range(0, len(files), self.cols)]
-
 def run(inputDir, referenceDir, inputRange, outputDir):
     scanMethods = [ ("BF", 32) ]
-    scanSpaces = [ "LIN" ]
-    scanMetric = [ "VAR" ]
+    scanMetric = [ "VAR", "RANGE" ]
     distanceOrders = [ 1,2,3,4 ]
 
     workspace = tempfile.mkdtemp()
