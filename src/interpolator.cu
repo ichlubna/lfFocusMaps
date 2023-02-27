@@ -253,8 +253,12 @@ ScanMetric Interpolator::InterpolationParams::parseMetric(std::string metric)
 {
     if(metric == "VAR")
         return ScanMetric::VARIANCE;
-    if(metric == "RANGE")
+    else if(metric == "RANGE")
         return ScanMetric::RANGE;
+    else if(metric == "IQR")
+        return ScanMetric::IQR;
+    else if(metric == "MAD")
+        return ScanMetric::MAD;
     std::cerr << "Scan metric set to default." << std::endl;
     return ScanMetric::VARIANCE;
 }

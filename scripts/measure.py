@@ -31,7 +31,7 @@ def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRa
 
 def run(inputDir, referenceDir, inputRange, outputDir):
     scanMethods = [ ("BF", 32) ]
-    scanMetric = [ "VAR", "RANGE" ]
+    scanMetric = [ "VAR", "RANGE", "IQR", "MAD" ]
     distanceOrders = [ 1,2,3,4 ]
 
     workspace = tempfile.mkdtemp()

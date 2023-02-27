@@ -317,26 +317,122 @@ namespace Kernels
         class Range
         {
             private:
-            int3 minCol{INT_MAX, INT_MAX, INT_MAX};
-            int3 maxCol{INT_MIN, INT_MIN, INT_MIN};
+            PixelArray<T> minCol{float4{FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX}};
+            PixelArray<T> maxCol{float4{FLT_MIN, FLT_MIN, FLT_MIN, FLT_MIN}};
             
             public:
             __device__ void add(PixelArray<T> val)
             {
-                auto color = val.uch4();
-                minCol.x = min(minCol.x,color.x);
-                minCol.y = min(minCol.y,color.y);
-                minCol.z = min(minCol.z,color.z);
-                maxCol.x = max(maxCol.x,color.x);
-                maxCol.y = max(maxCol.y,color.y);
-                maxCol.z = max(maxCol.z,color.z);
+                minCol[0] = min(minCol[0],val[0]);
+                minCol[1] = min(minCol[1],val[1]);
+                minCol[2] = min(minCol[2],val[2]);
+                maxCol[0] = max(maxCol[0],val[0]);
+                maxCol[1] = max(maxCol[1],val[1]);
+                maxCol[2] = max(maxCol[2],val[2]);
             }
             __device__ float dispersionAmount()
             {
-                return (maxCol.x-minCol.x) + (maxCol.y-minCol.y) + (maxCol.z-minCol.z);  
-                //return fmaxf(fmaxf(max.x-min.x,max.y-min.y),max.z-min.z);    
+                return Pixel::distance(minCol, maxCol);  
             }      
             __device__ Range& operator+=(const PixelArray<T>& rhs){
+
+              add(rhs);
+              return *this;
+            }
+        };
+       
+        template <typename T>
+        class Percentile
+        {
+            private:
+            float stepUp;
+            float stepDown;
+            float step{10};
+            float value{0};
+            bool init{false};
+
+            public:
+            __device__ Percentile(float percentile)
+            {
+                stepUp = 1.0f-percentile;
+                stepDown = percentile;
+            }
+            __device__ void add(PixelArray<T> pixel)
+            {
+                float dist = Pixel::distance(pixel, {float4{0,0,0,0}});
+
+                if(!init)
+                {
+                    value = dist;
+                    step = max(dist, 1.0f);
+                    init = true;
+                    return;
+                }
+                if(value > dist)
+                    value -= step*stepUp;
+                else if(value < dist)
+                    value += step*stepDown;
+                if(abs(value-dist) < step)
+                   step /= 2.0f; 
+            }
+            __device__ float result()
+            {
+                return value;
+            }
+        };
+ 
+        template <typename T>
+        class IQR
+        {
+            private:
+            Percentile<T> first{0.25};            
+            Percentile<T> second{0.75};            
+ 
+            public:
+            __device__ void add(PixelArray<T> val)
+            {
+                first.add(val); 
+                second.add(val); 
+            }
+            __device__ float dispersionAmount()
+            {
+                return second.result()-first.result();
+            }      
+            __device__ IQR& operator+=(const PixelArray<T>& rhs){
+
+              add(rhs);
+              return *this;
+            }
+        };
+      
+        template <typename T>
+        class Mad
+        {
+            private:
+            PixelArray<T> last;
+            PixelArray<T> sample;
+            float dist{0};
+            int n{0};
+            static constexpr int SAMPLE_CYCLE{5};
+             
+            public:
+            __device__ void add(PixelArray<T> val)
+            { 
+                if(n%SAMPLE_CYCLE == 0)
+                    sample = val;
+                if(n != 0)
+                {
+                    dist += Pixel::distance(val, sample);
+                    dist += Pixel::distance(val, last); 
+                }
+                last = val; 
+                n++;
+            }
+            __device__ float dispersionAmount()
+            {
+                return dist;
+            }      
+            __device__ Mad& operator+=(const PixelArray<T>& rhs){
 
               add(rhs);
               return *this;
@@ -426,7 +522,7 @@ namespace Kernels
         template<int blockSize, bool closest=false>
         __device__ float dispersion(ScanMetric t, int2 coords, float focus)
         {
-            return call<blockSize, closest, ScanMetrics::OnlineVariance<float>, ScanMetrics::Range<float>>(0,t, coords, focus);
+            return call<blockSize, closest, ScanMetrics::OnlineVariance<float>, ScanMetrics::Range<float>, ScanMetrics::IQR<float>, ScanMetrics::Mad<float>>(0,t, coords, focus);
         }
 
         __device__ float evaluate(int2 coords, float focus)
