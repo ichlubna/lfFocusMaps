@@ -149,6 +149,7 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     intValues[IntConstantIDs::CLOSEST_VIEWS] = params.closestViews;
     intValues[IntConstantIDs::BLOCK_SAMPLING] = params.blockSampling;
     intValues[IntConstantIDs::YUV_DISTANCE] = params.YUVDistance;
+    intValues[IntConstantIDs::CLOCK_SEED]= std::clock();
     int range = (params.scanRange > 0) ? params.scanRange : resolution.x/2;    
     intValues[IntConstantIDs::SCAN_RANGE] = range;
     cudaMemcpyToSymbol(Kernels::Constants::intConstants, intValues.data(), intValues.size() * sizeof(int));
@@ -269,6 +270,12 @@ FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method)
         return FocusMethod::ONE_DISTANCE;
     else if(method == "BF")
         return FocusMethod::BRUTE_FORCE;
+    else if(method == "RAND")
+        return FocusMethod::RANDOM;
+    else if(method == "HIER")
+        return FocusMethod::HIERARCHY;
+    else if(method == "DESC")
+        return FocusMethod::DESCENT;
     std::cerr << "Scan method set to default." << std::endl;
     return FocusMethod::BRUTE_FORCE;
 } 

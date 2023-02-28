@@ -30,7 +30,9 @@ def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRa
     return command
 
 def run(inputDir, referenceDir, inputRange, outputDir):
-    scanMethods = [ ("BF", 32) ]
+    scanMethods = [ ("BF", 16), ("BF", 32), ("BF", 64), ("BF", 128), ("BF", 256)
+                    ("RAND", 16), ("RAND", 32), ("RAND", 64)
+                    ("HIER", 0), ("HIER", 1), ("DESC", 0), ("DESC", 1) ]
     scanMetric = [ "VAR", "RANGE", "IQR", "MAD" ]
     distanceOrders = [ 1,2,3,4 ]
 

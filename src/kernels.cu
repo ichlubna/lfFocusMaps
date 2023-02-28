@@ -1,5 +1,6 @@
 #include <glm/glm.hpp>
 #include <cuda_fp16.h>
+#include <curand_kernel.h>
 #include "methods.h"
 
 namespace Kernels
@@ -23,6 +24,7 @@ namespace Kernels
         __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
         __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
         __device__ bool YUVDistance(){return intConstants[IntConstantIDs::YUV_DISTANCE];}
+        __device__ int ClockSeed(){return intConstants[IntConstantIDs::CLOCK_SEED];}
         
         __constant__ void* dataPointers[DataPointersIDs::POINTERS_COUNT];
         __device__ cudaSurfaceObject_t* surfaces(){return reinterpret_cast<cudaSurfaceObject_t*>(dataPointers[DataPointersIDs::SURFACES]);}
@@ -581,25 +583,100 @@ namespace Kernels
     
     namespace Focusing
     {
+        class Optimum
+        {
+            public:
+            float optimalFocus{0};
+            float minDispersion{FLT_MAX};
+            __device__ bool add(float focus, float dispersion)
+            {
+                if(dispersion < minDispersion)
+                {
+                   minDispersion = dispersion;
+                   optimalFocus = focus; 
+                   return true;
+                }
+                return false;
+            }
+
+        }; 
+
         __device__ int bruteForce(int2 coords)
         {
             int steps = Constants::focusMethodParameter();
             float stepSize{static_cast<float>(Constants::scanRange())/steps};
             float focus{0.0f};
-            float minDispersion{FLT_MAX};
-            float optimalFocus{0};
+            Optimum optimum;
             
             for(int step=0; step<steps; step++)
             {
                 float dispersion = FocusLevel::evaluate(coords, focus);
-                if(dispersion < minDispersion)
-                {
-                   minDispersion = dispersion;
-                   optimalFocus = focus; 
-                }
+                optimum.add(focus, dispersion);
                 focus += stepSize;  
             }
-            return optimalFocus;
+            return optimum.optimalFocus;
+        }
+        
+        __device__ int randomSampling(int2 coords)
+        {
+            unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
+            curandState state;
+            curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
+            int steps = Constants::focusMethodParameter();
+            int range = Constants::scanRange();
+            Optimum optimum;
+            
+            for(int step=0; step<steps; step++)
+            {
+                float focus = range*curand_uniform(&state) ;
+                float dispersion = FocusLevel::evaluate(coords, focus);
+                optimum.add(focus, dispersion);
+            }
+            return optimum.optimalFocus;
+        }
+       
+        template <bool stochastic> 
+        __device__ int hierarchical(int2 coords)
+        {
+            curandState state;
+            if constexpr (stochastic)
+            {
+                unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
+                curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
+            }
+
+            int range = Constants::scanRange();
+            Optimum optimum;
+            
+            /*for(int step=0; step<steps; step++)
+            {
+                float focus = range*curand_uniform(&state) ;
+                float dispersion = FocusLevel::evaluate(coords, focus);
+                optimum.add(focus, dispersion);
+            }*/
+            return optimum.optimalFocus;
+        }
+        
+        template <bool stochastic> 
+        __device__ int descent(int2 coords)
+        {
+            curandState state;
+            if constexpr (stochastic)
+            {
+                unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
+                curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
+            }
+
+            int range = Constants::scanRange();
+            Optimum optimum;
+          /*  
+            for(int step=0; step<steps; step++)
+            {
+                float focus = range*curand_uniform(&state) ;
+                float dispersion = FocusLevel::evaluate(coords, focus);
+                optimum.add(focus, dispersion);
+            }*/
+            return optimum.optimalFocus;
         }
     }
 
@@ -622,6 +699,24 @@ namespace Kernels
 
             case BRUTE_FORCE:
                 focus = Focusing::bruteForce(coords);
+            break;
+            
+            case RANDOM:
+                focus = Focusing::randomSampling(coords);
+            break;
+            
+            case HIERARCHY:
+                if(Constants::focusMethodParameter())
+                    focus = Focusing::hierarchical<true>(coords);
+                else
+                    focus = Focusing::hierarchical<false>(coords);
+            break;
+            
+            case DESCENT:
+                if(Constants::focusMethodParameter())
+                    focus = Focusing::descent<true>(coords);
+                else
+                    focus = Focusing::descent<false>(coords);
             break;
 
             default:
