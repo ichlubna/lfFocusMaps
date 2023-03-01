@@ -646,14 +646,32 @@ namespace Kernels
             }
 
             int range = Constants::scanRange();
-            Optimum optimum;
-            
-            /*for(int step=0; step<steps; step++)
+            Optimum optimum; 
+            bool divide{true};
+            float2 dividedRange{0, static_cast<float>(range)};
+            constexpr int SAMPLING_RATE{7};
+            constexpr float NORMALIZED_STEP{1.0f/SAMPLING_RATE};
+            float samples[SAMPLING_RATE];
+            while(divide)
             {
-                float focus = range*curand_uniform(&state) ;
-                float dispersion = FocusLevel::evaluate(coords, focus);
-                optimum.add(focus, dispersion);
-            }*/
+//TODO nonlinear focus 
+                float rangeSize = dividedRange.y-dividedRange.x;
+                float step = rangeSize*NORMALIZED_STEP;
+                for(int i=0; i<SAMPLING_RATE; i++)
+                    samples[i] = FocusLevel::evaluate(coords, i*step);
+                float left = samples[0]+samples[1]+samples[2];
+                float right = samples[4]+samples[5]+samples[6];
+                if(left < right)
+                {
+                    divide = optimum.add(rangeSize*0.25, left);
+                    dividedRange = {0, dividedRange.y/2};
+                }
+                else
+                {
+                    divide = optimum.add(rangeSize*0.75, right);
+                    dividedRange = {dividedRange.y/2, dividedRange.y};
+                }
+            }
             return optimum.optimalFocus;
         }
         
@@ -668,6 +686,7 @@ namespace Kernels
             }
 
             int range = Constants::scanRange();
+            float step{0};
             Optimum optimum;
           /*  
             for(int step=0; step<steps; step++)
