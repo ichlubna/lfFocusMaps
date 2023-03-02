@@ -156,6 +156,7 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     
     std::vector<float> floatValues(FloatConstantIDs::FLOAT_CONSTANTS_COUNT);
     floatValues[FloatConstantIDs::SPACE] = params.space;
+    floatValues[FloatConstantIDs::DESCENT_START_STEP] = (static_cast<float>(range)/DESCENT_START_POINTS)/4.0f;
     cudaMemcpyToSymbol(Kernels::Constants::floatConstants, floatValues.data(), floatValues.size() * sizeof(float));
 
     std::vector<void*> dataPointers(DataPointersIDs::POINTERS_COUNT);
@@ -165,6 +166,12 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     dataPointers[DataPointersIDs::CLOSEST_WEIGHTS] = reinterpret_cast<void*>(closestFramesWeightsGPU);
     dataPointers[DataPointersIDs::CLOSEST_COORDS] = reinterpret_cast<void*>(closestFramesCoordsLinearGPU);
     cudaMemcpyToSymbol(Kernels::Constants::dataPointers, dataPointers.data(), dataPointers.size() * sizeof(void*));
+            
+    constexpr float START_STEP{1.0f/(DESCENT_START_POINTS)};
+    float startFocuses[DESCENT_START_POINTS];
+    for(int i=1; i<DESCENT_START_POINTS; i++)
+        startFocuses[i] = START_STEP*i*range;
+    cudaMemcpyToSymbol(Kernels::Constants::descentStartPoints, startFocuses, DESCENT_START_POINTS * sizeof(float));
 }
 
 void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)

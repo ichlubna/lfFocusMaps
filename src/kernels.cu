@@ -35,6 +35,9 @@ namespace Kernels
         
         __constant__ float floatConstants[FloatConstantIDs::FLOAT_CONSTANTS_COUNT];
         __device__ float scanSpace(){return floatConstants[FloatConstantIDs::SPACE];}
+        __device__ float descentStartStep(){return floatConstants[FloatConstantIDs::DESCENT_START_STEP];}
+
+        __constant__ float descentStartPoints[DESCENT_START_POINTS];
     }
 
     __device__ constexpr int MAX_IMAGES{256};
@@ -582,7 +585,7 @@ namespace Kernels
     }
     
     namespace Focusing
-    {
+    {    
         class Optimum
         {
             public:
@@ -598,8 +601,20 @@ namespace Kernels
                 }
                 return false;
             }
-
+            __device__ void addForce(float focus, float dispersion)
+            {
+                   minDispersion = dispersion;
+                   optimalFocus = focus; 
+            }
         }; 
+
+        __device__ Optimum& minOpt(Optimum &a, Optimum &b)
+        {
+            if(a.minDispersion < b.minDispersion)
+                return a;
+            else
+                return b;
+        }
 
         __device__ int bruteForce(int2 coords)
         {
@@ -632,6 +647,7 @@ namespace Kernels
                 float dispersion = FocusLevel::evaluate(coords, focus);
                 optimum.add(focus, dispersion);
             }
+
             return optimum.optimalFocus;
         }
        
@@ -649,28 +665,33 @@ namespace Kernels
             Optimum optimum; 
             bool divide{true};
             float2 dividedRange{0, static_cast<float>(range)};
-            constexpr int SAMPLING_RATE{7};
+            constexpr int SAMPLING_RATE{10}; 
+            constexpr int SAMPLING_RATE_HALF{SAMPLING_RATE/2};
             constexpr float NORMALIZED_STEP{1.0f/SAMPLING_RATE};
-            float samples[SAMPLING_RATE];
-            while(divide)
+            constexpr int MAX_DIVISIONS{10};
+            for(int d=0; d<MAX_DIVISIONS; d++)
             {
-//TODO nonlinear focus 
+//precompute
+                float2 dispersions{0, 0};
                 float rangeSize = dividedRange.y-dividedRange.x;
                 float step = rangeSize*NORMALIZED_STEP;
                 for(int i=0; i<SAMPLING_RATE; i++)
-                    samples[i] = FocusLevel::evaluate(coords, i*step);
-                float left = samples[0]+samples[1]+samples[2];
-                float right = samples[4]+samples[5]+samples[6];
-                if(left < right)
+                    if(i < SAMPLING_RATE_HALF)
+                        dispersions.x += FocusLevel::evaluate(coords, dividedRange.x+i*step);
+                    else
+                        dispersions.y += FocusLevel::evaluate(coords, dividedRange.x+i*step);
+                if(dispersions.x < dispersions.y)
                 {
-                    divide = optimum.add(rangeSize*0.25, left);
+                    divide = optimum.add(dividedRange.x+rangeSize*0.25, dispersions.x);
                     dividedRange = {0, dividedRange.y/2};
                 }
                 else
                 {
-                    divide = optimum.add(rangeSize*0.75, right);
+                    divide = optimum.add(dividedRange.x+rangeSize*0.75, dispersions.y);
                     dividedRange = {dividedRange.y/2, dividedRange.y};
                 }
+                if(!divide)
+                    break;
             }
             return optimum.optimalFocus;
         }
@@ -685,17 +706,33 @@ namespace Kernels
                 curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
             }
 
-            int range = Constants::scanRange();
-            float step{0};
-            Optimum optimum;
-          /*  
-            for(int step=0; step<steps; step++)
+            constexpr int MAX_STEPS{100};
+            Optimum optimum[DESCENT_START_POINTS];
+            constexpr float LEARN_RATE{0.1f};
+            constexpr float MIN_STEP{0.5f};
+            
+            for(int p=0; p<DESCENT_START_POINTS; p++)
             {
-                float focus = range*curand_uniform(&state) ;
-                float dispersion = FocusLevel::evaluate(coords, focus);
-                optimum.add(focus, dispersion);
-            }*/
-            return optimum.optimalFocus;
+                float focus = Constants::descentStartPoints[p];
+                float step{Constants::descentStartStep()};
+                for(int i=0; i<MAX_STEPS; i++)
+                {      
+                    float2 focusPair{focus-step, focus+step};
+                    float2 dispersionPair{FocusLevel::evaluate(coords, focusPair.x), FocusLevel::evaluate(coords, focusPair.y)};
+                    if(dispersionPair.x < dispersionPair.y)
+                        optimum[p].addForce(focusPair.x, dispersionPair.x);
+                    else
+                        optimum[p].addForce(focusPair.y, dispersionPair.y);
+                    step = LEARN_RATE*abs(focus-optimum[p].optimalFocus);
+                    focus = optimum[p].optimalFocus;
+                    if(step < MIN_STEP)
+                        break;
+                }
+            }
+            Optimum &minimal = optimum[0];
+            for(int i=1; i<DESCENT_START_POINTS; i++)
+                minimal = minOpt(minimal, optimum[i]);
+            return minimal.optimalFocus;
         }
     }
 
