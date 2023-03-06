@@ -38,6 +38,8 @@ namespace Kernels
         __device__ float descentStartStep(){return floatConstants[FloatConstantIDs::DESCENT_START_STEP];}
 
         __constant__ float descentStartPoints[DESCENT_START_POINTS];
+        __constant__ float hierarchySteps[HIERARCHY_DIVISIONS];
+        __constant__ int hierarchySamplings[HIERARCHY_DIVISIONS];
     }
 
     __device__ constexpr int MAX_IMAGES{256};
@@ -665,30 +667,28 @@ namespace Kernels
             Optimum optimum; 
             bool divide{true};
             float2 dividedRange{0, static_cast<float>(range)};
-            constexpr int SAMPLING_RATE{10}; 
-            constexpr int SAMPLING_RATE_HALF{SAMPLING_RATE/2};
-            constexpr float NORMALIZED_STEP{1.0f/SAMPLING_RATE};
-            constexpr int MAX_DIVISIONS{10};
-            for(int d=0; d<MAX_DIVISIONS; d++)
-            {
-//precompute
-                float2 dispersions{0, 0};
-                float rangeSize = dividedRange.y-dividedRange.x;
-                float step = rangeSize*NORMALIZED_STEP;
-                for(int i=0; i<SAMPLING_RATE; i++)
-                    if(i < SAMPLING_RATE_HALF)
-                        dispersions.x += FocusLevel::evaluate(coords, dividedRange.x+i*step);
-                    else
-                        dispersions.y += FocusLevel::evaluate(coords, dividedRange.x+i*step);
-                if(dispersions.x < dispersions.y)
+            for(int d=0; d<HIERARCHY_DIVISIONS; d++)
+            {  
+                Optimum leftRightOptimum[2];
+                int sampling = Constants::hierarchySamplings[d];
+                int samplingHalf = sampling/2;
+                float focus = dividedRange.x;
+                for(int i=0; i<sampling; i++)
                 {
-                    divide = optimum.add(dividedRange.x+rangeSize*0.25, dispersions.x);
-                    dividedRange = {0, dividedRange.y/2};
+                    float disp = FocusLevel::evaluate(coords, focus);
+                    leftRightOptimum[(i<samplingHalf) ? 0 : 1].add(focus, disp);
+                    focus += Constants::hierarchySteps[d];
+                }
+
+                if(leftRightOptimum[0].minDispersion < leftRightOptimum[1].minDispersion)
+                {
+                    divide = optimum.add(leftRightOptimum[0].optimalFocus, leftRightOptimum[0].minDispersion);
+                    dividedRange = {0, dividedRange.y*0.5f};
                 }
                 else
                 {
-                    divide = optimum.add(dividedRange.x+rangeSize*0.75, dispersions.y);
-                    dividedRange = {dividedRange.y/2, dividedRange.y};
+                    divide = optimum.add(leftRightOptimum[1].optimalFocus, leftRightOptimum[1].minDispersion);
+                    dividedRange = {dividedRange.y*0.5f, dividedRange.y};
                 }
                 if(!divide)
                     break;

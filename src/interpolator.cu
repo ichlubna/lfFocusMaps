@@ -172,6 +172,20 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     for(int i=1; i<DESCENT_START_POINTS; i++)
         startFocuses[i] = START_STEP*i*range;
     cudaMemcpyToSymbol(Kernels::Constants::descentStartPoints, startFocuses, DESCENT_START_POINTS * sizeof(float));
+    
+    float hierarchySteps[HIERARCHY_DIVISIONS];
+    int hierarchySamplings[HIERARCHY_DIVISIONS];
+    int currentSampling{15};
+    float currentRange{static_cast<float>(range)};
+    for(int i=0; i<HIERARCHY_DIVISIONS; i++)
+    {
+        hierarchySamplings[i] = currentSampling;
+        hierarchySteps[i] = currentRange/currentSampling;
+        currentSampling /= 2;
+        currentRange /= 2;
+    }
+    cudaMemcpyToSymbol(Kernels::Constants::hierarchySteps, hierarchySteps, HIERARCHY_DIVISIONS * sizeof(float));
+    cudaMemcpyToSymbol(Kernels::Constants::hierarchySamplings, hierarchySamplings, HIERARCHY_DIVISIONS * sizeof(int));
 }
 
 void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
