@@ -618,7 +618,7 @@ namespace Kernels
                 return b;
         }
 
-        __device__ int bruteForce(int2 coords)
+        __device__ float bruteForce(int2 coords)
         {
             int steps = Constants::focusMethodParameter();
             float stepSize{static_cast<float>(Constants::scanRange())/steps};
@@ -634,7 +634,7 @@ namespace Kernels
             return optimum.optimalFocus;
         }
         
-        __device__ int randomSampling(int2 coords)
+        __device__ float randomSampling(int2 coords)
         {
             unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
             curandState state;
@@ -654,7 +654,7 @@ namespace Kernels
         }
        
         template <bool stochastic> 
-        __device__ int hierarchical(int2 coords)
+        __device__ float hierarchical(int2 coords)
         {
             curandState state;
             if constexpr (stochastic)
@@ -697,7 +697,7 @@ namespace Kernels
         }
         
         template <bool stochastic> 
-        __device__ int descent(int2 coords)
+        __device__ float descent(int2 coords)
         {
             curandState state;
             if constexpr (stochastic)
@@ -734,6 +734,54 @@ namespace Kernels
                 minimal = minOpt(minimal, optimum[i]);
             return minimal.optimalFocus;
         }
+        
+        template <bool stochastic> 
+        __device__ float simplex(int2 coords)
+        {
+            curandState state;
+            if constexpr (stochastic)
+            {
+                unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
+                curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
+            }
+
+            constexpr int SIMPLEX_SIZE{2};
+            Optimum simplex[SIMPLEX_SIZE];
+           
+            constexpr int MAX_ITERATIONS{3};
+            constexpr int PROBE_COUNT{10};
+            constexpr float SHRINK{0.5};
+            const float interval = static_cast<float>(Constants::scanRange())/(PROBE_COUNT);
+            float lastEnd = 0;
+            Optimum optimum;
+
+            for(int p=0; p<PROBE_COUNT; p++) 
+            {   
+                for(int i=0; i<SIMPLEX_SIZE; i++)
+                {
+                   float focus = lastEnd;
+                   simplex[i].add(focus, FocusLevel::evaluate(coords, focus));
+                   lastEnd += interval;
+                }
+
+                int best = 0;
+                for(int i=0; i<MAX_ITERATIONS; i++)
+                {
+                    int2 worstBest{1,0};
+                    if(simplex[0].minDispersion > simplex[1].minDispersion) 
+                        worstBest = {0,1};
+                    auto &worstFocus = simplex[worstBest.x];
+                    auto focus = worstFocus.optimalFocus+SHRINK*(simplex[worstBest.y].optimalFocus-worstFocus.optimalFocus);
+                    if(!worstFocus.add(focus, FocusLevel::evaluate(coords, focus)))
+                    {
+                        best = worstBest.y;
+                        break; 
+                    }
+                }
+                optimum.add(simplex[best].optimalFocus, simplex[best].minDispersion);
+            }
+            return optimum.optimalFocus;
+        }
     }
 
     __global__ void process()
@@ -759,6 +807,13 @@ namespace Kernels
             
             case RANDOM:
                 focus = Focusing::randomSampling(coords);
+            break;
+            
+            case SIMPLEX:
+                if(Constants::focusMethodParameter())
+                    focus = Focusing::simplex<true>(coords);
+                else
+                    focus = Focusing::simplex<false>(coords);
             break;
             
             case HIERARCHY:

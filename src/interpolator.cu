@@ -295,6 +295,8 @@ FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method)
         return FocusMethod::RANDOM;
     else if(method == "HIER")
         return FocusMethod::HIERARCHY;
+    else if(method == "SIMP")
+        return FocusMethod::SIMPLEX;
     else if(method == "DESC")
         return FocusMethod::DESCENT;
     std::cerr << "Scan method set to default." << std::endl;

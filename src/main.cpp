@@ -15,6 +15,7 @@ int main(int argc, char **argv)
                           "     RAND (random sampling) - parameter: number of scanning samples\n"
                           "     HIER (hierarchichal sampling) - parameter: 1 randomized, 0 uniform \n"
                           "     DESC (3-way descent) - parameter: 1 randomized, 0 uniform\n"
+                          "     SIMP (simplex search) - parameter: 1 randomized, 0 uniform\n"
                           "-p - method parameter\n"
                           "-e - scan metric to evaluate the color dispersion:\n"
                           "     VAR - variance (default)\n"
