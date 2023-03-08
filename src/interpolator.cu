@@ -31,8 +31,9 @@ class Timer
     cudaEvent_t startEvent, stopEvent;
 };
 
-Interpolator::Interpolator(std::string inputPath) : input{inputPath}
+Interpolator::Interpolator(std::string inputPath, std::string mode) : input{inputPath}
 {
+    addressMode = parseAddressMode(mode);
     init();
 }
 
@@ -49,6 +50,26 @@ void Interpolator::init()
 
 int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
 {
+    cudaTextureAddressMode cudaAddressMode = cudaAddressModeClamp;
+    switch (addressMode)
+    {
+    case WRAP:
+        cudaAddressMode = cudaAddressModeWrap;
+    break;
+    case CLAMP:
+        cudaAddressMode = cudaAddressModeClamp;
+    break;
+    case MIRROR:
+        cudaAddressMode = cudaAddressModeMirror;
+    break;
+    case BORDER:
+        cudaAddressMode = cudaAddressModeBorder;
+    break;
+    case BLEND:
+        cudaAddressMode = cudaAddressModeClamp;
+    break;
+    }
+
     cudaChannelFormatDesc channels = cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
     cudaArray *arr;
     cudaMallocArray(&arr, &channels, size.x, size.y);
@@ -61,8 +82,9 @@ int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
     cudaTextureDesc texDescr;
     memset(&texDescr, 0, sizeof(cudaTextureDesc));
     texDescr.filterMode = cudaFilterModeLinear;
-    texDescr.addressMode[0] = cudaAddressModeClamp;
-    texDescr.addressMode[1] = cudaAddressModeClamp;
+    //cudaAddressMode = cudaAddressModeBorder;
+    texDescr.addressMode[0] = cudaAddressMode;
+    texDescr.addressMode[1] = cudaAddressMode;
     texDescr.readMode = cudaReadModeNormalizedFloat;
     cudaTextureObject_t texObj{0};
     cudaCreateTextureObject(&texObj, &texRes, &texDescr, NULL);
@@ -149,7 +171,8 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     intValues[IntConstantIDs::CLOSEST_VIEWS] = params.closestViews;
     intValues[IntConstantIDs::BLOCK_SAMPLING] = params.blockSampling;
     intValues[IntConstantIDs::YUV_DISTANCE] = params.YUVDistance;
-    intValues[IntConstantIDs::CLOCK_SEED]= std::clock();
+    intValues[IntConstantIDs::CLOCK_SEED] = std::clock();
+    intValues[IntConstantIDs::BLEND_ADDRESS_MODE] = (addressMode == AddressMode::BLEND);
     int range = (params.scanRange > 0) ? params.scanRange : resolution.x/2;    
     intValues[IntConstantIDs::SCAN_RANGE] = range;
     cudaMemcpyToSymbol(Kernels::Constants::intConstants, intValues.data(), intValues.size() * sizeof(int));
@@ -284,6 +307,22 @@ ScanMetric Interpolator::InterpolationParams::parseMetric(std::string metric)
     std::cerr << "Scan metric set to default." << std::endl;
     return ScanMetric::VARIANCE;
 }
+
+AddressMode Interpolator::parseAddressMode(std::string addressMode)
+{
+    if(addressMode == "WRAP")
+        return AddressMode::WRAP;
+    else if(addressMode == "CLAMP")
+        return AddressMode::CLAMP;
+    else if(addressMode == "BORDER")
+        return AddressMode::BORDER;
+    else if(addressMode == "MIRROR")
+        return AddressMode::MIRROR;
+    else if(addressMode == "BLEND")
+        return AddressMode::BLEND;
+    std::cerr << "Texture address mode set to default." << std::endl;
+    return AddressMode::CLAMP;
+}
  
 FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method)
 {
@@ -325,7 +364,6 @@ void Interpolator::interpolate(InterpolationParams params)
         std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
     }
     std::cout << "Average of " << params.runs << " runs: " << avgTime/params.runs << " ms" << std::endl;
-
     storeResults(params.outputPath);
 }
 

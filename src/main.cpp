@@ -29,6 +29,7 @@ int main(int argc, char **argv)
                           "-r - scanning range in pixels - the maximum disparity between input images, default is half of image width\n"
                           "-d - order of the distance function, e.g., 2 => distance = distance^2, default is 1"
                           "-t - number of kernel runs for performance measurement - default is 1\n"
+                          "-a - address mode - what to sample outside the images: WRAP, CLAMP, MIRROR, BORDER, BLEND - default is CLAMP\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;
@@ -41,7 +42,7 @@ int main(int argc, char **argv)
     
     try
     {
-        Interpolator interpolator(static_cast<std::string>(args["-i"]));
+        Interpolator interpolator(static_cast<std::string>(args["-i"]), static_cast<std::string>(args["-a"]));
         Interpolator::InterpolationParams params;
         params
         .setMethod(static_cast<std::string>(args["-m"]))

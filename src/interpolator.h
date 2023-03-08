@@ -26,7 +26,7 @@ class Interpolator
             method = parseMethod(inputMethod);
             return this;
         }
-        
+         
         InterpolationParams* setMetric(std::string inputMetric)
         {
             metric = parseMetric(inputMetric);
@@ -117,12 +117,13 @@ class Interpolator
         ScanMetric parseMetric(std::string inputMetric);
     };
 
-    Interpolator(std::string inputPath);
+    Interpolator(std::string inputPath, std::string mode);
     ~Interpolator();
     void interpolate(InterpolationParams params);
 
     private:
     static constexpr int OUTPUT_SURFACE_COUNT{2};
+    AddressMode addressMode{CLAMP};
     std::vector<int*> surfaceInputArrays;
     std::vector<int*> surfaceOutputArrays;
     void *surfaceObjectsArr;
@@ -147,4 +148,5 @@ class Interpolator
     std::pair<int, int*> createSurfaceObject(glm::ivec3 size, const uint8_t *data=nullptr);
     int createTextureObject(const uint8_t *data, glm::ivec3 size);
     void prepareClosestFrames(glm::vec2 viewCoordinates);
+    AddressMode parseAddressMode(std::string addressMode);
 };

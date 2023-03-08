@@ -24,6 +24,7 @@ namespace Kernels
         __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
         __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
         __device__ bool YUVDistance(){return intConstants[IntConstantIDs::YUV_DISTANCE];}
+        __device__ bool blendAddressMode(){return intConstants[IntConstantIDs::BLEND_ADDRESS_MODE];}
         __device__ int ClockSeed(){return intConstants[IntConstantIDs::CLOCK_SEED];}
         
         __constant__ void* dataPointers[DataPointersIDs::POINTERS_COUNT];
@@ -280,10 +281,19 @@ namespace Kernels
         template <typename T>
         __device__ PixelArray<T> load(int imageID, float2 coords)
         {
+            int id{0}; 
             if constexpr (GUESS_HANDLES)
-                return PixelArray<T>{tex2D<float4>(imageID+1, coords.x, coords.y)}*UCHAR_MAX;
-            else    
-                return PixelArray<T>{tex2D<float4>(Constants::textures()[imageID], coords.x, coords.y)}*UCHAR_MAX;
+                id = imageID+1;
+            else
+                id = Constants::textures()[imageID];
+            if(Constants::blendAddressMode())
+            {
+                auto p1 = PixelArray<T>{tex2D<float4>(id, coords.x, coords.y)}*UCHAR_MAX; 
+                auto p2 = PixelArray<T>{tex2D<float4>(id, coords.x, coords.y)}*UCHAR_MAX;
+                return (p1+p2)/2;
+            }    
+            else
+                return PixelArray<T>{tex2D<float4>(id, coords.x, coords.y)}*UCHAR_MAX;
         }
         
     }
