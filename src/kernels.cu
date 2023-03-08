@@ -20,7 +20,6 @@ namespace Kernels
         __device__ ScanMetric scanMetric(){return static_cast<ScanMetric>(intConstants[IntConstantIDs::SCAN_METRIC]);}
         __device__ FocusMethod focusMethod(){return static_cast<FocusMethod>(intConstants[IntConstantIDs::FOCUS_METHOD]);}
         __device__ int focusMethodParameter(){return intConstants[IntConstantIDs::FOCUS_METHOD_PARAMETER];}
-        __device__ int scanRange(){return intConstants[IntConstantIDs::SCAN_RANGE];}
         __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
         __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
         __device__ bool YUVDistance(){return intConstants[IntConstantIDs::YUV_DISTANCE];}
@@ -37,6 +36,7 @@ namespace Kernels
         __constant__ float floatConstants[FloatConstantIDs::FLOAT_CONSTANTS_COUNT];
         __device__ float scanSpace(){return floatConstants[FloatConstantIDs::SPACE];}
         __device__ float descentStartStep(){return floatConstants[FloatConstantIDs::DESCENT_START_STEP];}
+        __device__ float scanRange(){return floatConstants[FloatConstantIDs::SCAN_RANGE];}
 
         __constant__ float descentStartPoints[DESCENT_START_POINTS];
         __constant__ float hierarchySteps[HIERARCHY_DIVISIONS];
@@ -288,8 +288,16 @@ namespace Kernels
                 id = Constants::textures()[imageID];
             if(Constants::blendAddressMode())
             {
-                auto p1 = PixelArray<T>{tex2D<float4>(id, coords.x, coords.y)}*UCHAR_MAX; 
-                auto p2 = PixelArray<T>{tex2D<float4>(id, coords.x, coords.y)}*UCHAR_MAX;
+                constexpr float SPREAD{0.1f};
+                float2 offset = {0,0};
+                if(coords.x > 1.0 || coords.x < 0.0)
+                    offset.y = coords.x-floor(coords.x);
+                if(coords.y > 1.0 || coords.y < 0.0)
+                    offset.x = coords.y-floor(coords.y);
+                offset.x *= SPREAD;
+                offset.y *= SPREAD;
+                auto p1 = PixelArray<T>{tex2D<float4>(id, coords.x+offset.x, coords.y+offset.y)}*UCHAR_MAX; 
+                auto p2 = PixelArray<T>{tex2D<float4>(id, coords.x-offset.x, coords.y-offset.y)}*UCHAR_MAX;
                 return (p1+p2)/2;
             }    
             else
@@ -478,7 +486,7 @@ namespace Kernels
     namespace FocusLevel
     {      
         template<int blockSize, typename T> 
-        __device__ void evaluateBlock(int gridID, float focus, int2 coords, T *dispersions)
+        __device__ void evaluateBlock(int gridID, float focus, float2 coords, T *dispersions)
         {
             float transformedFocus = transformFocus(focus, Constants::scanRange(), Constants::scanSpace());
             const float2 BLOCK_OFFSETS[]{ {0,0}, {-1,0.5}, {0.5, 1}, {1,-0.5}, {-0.5,-1} };
@@ -491,7 +499,7 @@ namespace Kernels
         }
 
         template<typename T, int blockSize, bool closest=false>
-        __device__ float evaluateDispersion(int2 coords, float focus)
+        __device__ float evaluateDispersion(float2 coords, float focus)
         {
             auto cr = Constants::colsRows();
             T dispersionCalc[blockSize];
@@ -526,10 +534,10 @@ namespace Kernels
 
         template<int blockSize, bool closest, typename...TAIL>
         __device__ typename std::enable_if_t<sizeof...(TAIL)==0, float> 
-        call(int,ScanMetric,int2,float){}
+        call(int,ScanMetric,float2,float){}
 
         template<int blockSize, bool closest, typename H, typename...TAIL>
-        __device__ float call(int n,ScanMetric type, int2 coords, float focus)
+        __device__ float call(int n,ScanMetric type, float2 coords, float focus)
         {
             if(n==type)
                 return evaluateDispersion<H, blockSize, closest>(coords, focus);
@@ -537,12 +545,12 @@ namespace Kernels
         }
 
         template<int blockSize, bool closest=false>
-        __device__ float dispersion(ScanMetric t, int2 coords, float focus)
+        __device__ float dispersion(ScanMetric t, float2 coords, float focus)
         {
             return call<blockSize, closest, ScanMetrics::OnlineVariance<float>, ScanMetrics::Range<float>, ScanMetrics::IQR<float>, ScanMetrics::Mad<float>>(0,t, coords, focus);
         }
 
-        __device__ float evaluate(int2 coords, float focus)
+        __device__ float evaluate(float2 coords, float focus)
         {
             auto closestViews = Constants::closestViews(); 
             auto blockSampling = Constants::blockSampling();
@@ -561,7 +569,7 @@ namespace Kernels
         }
        
         template<bool closest=false>
-        __device__ uchar4 render(int2 coords, float focus)
+        __device__ uchar4 render(float2 coords, float focus)
         {
             auto cr = Constants::colsRows();
             PixelArray<float> sum;
@@ -628,7 +636,7 @@ namespace Kernels
                 return b;
         }
 
-        __device__ float bruteForce(int2 coords)
+        __device__ float bruteForce(float2 coords)
         {
             int steps = Constants::focusMethodParameter();
             float stepSize{static_cast<float>(Constants::scanRange())/steps};
@@ -644,7 +652,7 @@ namespace Kernels
             return optimum.optimalFocus;
         }
         
-        __device__ float randomSampling(int2 coords)
+        __device__ float randomSampling(float2 coords)
         {
             unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
             curandState state;
@@ -664,7 +672,7 @@ namespace Kernels
         }
        
         template <bool stochastic> 
-        __device__ float hierarchical(int2 coords)
+        __device__ float hierarchical(float2 coords)
         {
             curandState state;
             if constexpr (stochastic)
@@ -707,7 +715,7 @@ namespace Kernels
         }
         
         template <bool stochastic> 
-        __device__ float descent(int2 coords)
+        __device__ float descent(float2 coords)
         {
             curandState state;
             if constexpr (stochastic)
@@ -746,7 +754,7 @@ namespace Kernels
         }
         
         template <bool stochastic> 
-        __device__ float simplex(int2 coords)
+        __device__ float pyramid(float2 coords)
         {
             curandState state;
             if constexpr (stochastic)
@@ -754,51 +762,16 @@ namespace Kernels
                 unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
                 curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
             }
-
-            constexpr int SIMPLEX_SIZE{2};
-            Optimum simplex[SIMPLEX_SIZE];
-           
-            constexpr int MAX_ITERATIONS{3};
-            constexpr int PROBE_COUNT{10};
-            constexpr float SHRINK{0.5};
-            const float interval = static_cast<float>(Constants::scanRange())/(PROBE_COUNT);
-            float lastEnd = 0;
-            Optimum optimum;
-
-            for(int p=0; p<PROBE_COUNT; p++) 
-            {   
-                for(int i=0; i<SIMPLEX_SIZE; i++)
-                {
-                   float focus = lastEnd;
-                   simplex[i].add(focus, FocusLevel::evaluate(coords, focus));
-                   lastEnd += interval;
-                }
-
-                int best = 0;
-                for(int i=0; i<MAX_ITERATIONS; i++)
-                {
-                    int2 worstBest{1,0};
-                    if(simplex[0].minDispersion > simplex[1].minDispersion) 
-                        worstBest = {0,1};
-                    auto &worstFocus = simplex[worstBest.x];
-                    auto focus = worstFocus.optimalFocus+SHRINK*(simplex[worstBest.y].optimalFocus-worstFocus.optimalFocus);
-                    if(!worstFocus.add(focus, FocusLevel::evaluate(coords, focus)))
-                    {
-                        best = worstBest.y;
-                        break; 
-                    }
-                }
-                optimum.add(simplex[best].optimalFocus, simplex[best].minDispersion);
-            }
-            return optimum.optimalFocus;
         }
     }
 
     __global__ void process()
     {
-        int2 coords = getImgCoords();
-        if(coordsOutside(coords))
+        int2 threadCoords = getImgCoords(); 
+        if(coordsOutside(threadCoords))
             return;
+        float2 coords = {static_cast<float>(threadCoords.x)/Constants::imgRes().x,
+                        static_cast<float>(threadCoords.y)/Constants::imgRes().y};
 
         //MemoryPartitioner<half> memoryPartitioner(localMemory);
         //auto localWeights = memoryPartitioner.array(gridSize());
@@ -819,11 +792,11 @@ namespace Kernels
                 focus = Focusing::randomSampling(coords);
             break;
             
-            case SIMPLEX:
+            case PYRAMID:
                 if(Constants::focusMethodParameter())
-                    focus = Focusing::simplex<true>(coords);
+                    focus = Focusing::pyramid<true>(coords);
                 else
-                    focus = Focusing::simplex<false>(coords);
+                    focus = Focusing::pyramid<false>(coords);
             break;
             
             case HIERARCHY:
@@ -850,7 +823,7 @@ namespace Kernels
             color = FocusLevel::render(coords, focus);
 
         unsigned char focusColor = (focus/Constants::scanRange())*UCHAR_MAX;
-        Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, coords);
-        Pixel::store(color, FileNames::RENDER_IMAGE, coords);
+        Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, threadCoords);
+        Pixel::store(color, FileNames::RENDER_IMAGE, threadCoords);
     }
 }

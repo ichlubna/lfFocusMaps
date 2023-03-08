@@ -15,7 +15,10 @@ int main(int argc, char **argv)
                           "     RAND (random sampling) - parameter: number of scanning samples\n"
                           "     HIER (hierarchichal sampling) - parameter: 1 randomized, 0 uniform \n"
                           "     DESC (3-way descent) - parameter: 1 randomized, 0 uniform\n"
-                          "     SIMP (simplex search) - parameter: 1 randomized, 0 uniform\n"
+                          "     PYR (pyramid approach) - parameter: 1 randomized, 0 uniform\n"
+                          "     The first phase samples downscaled images that need to be stored in folder\n"
+                          "     named the same as input folder with added _down\n"
+                          "     e.g.: -i my/folder => my contains folder and folder_down\n"
                           "-p - method parameter\n"
                           "-e - scan metric to evaluate the color dispersion:\n"
                           "     VAR - variance (default)\n"
@@ -26,7 +29,7 @@ int main(int argc, char **argv)
                           "-y   use weighted YUV color distance\n"
                           "-b - block sampling - uses also neighboring pixels for matching\n"
                           "-f - use faster variant with only four closest views\n"
-                          "-r - scanning range in pixels - the maximum disparity between input images, default is half of image width\n"
+                          "-r - normalized scanning range - the maximum disparity between input images, default is half of image width - 0.5\n"
                           "-d - order of the distance function, e.g., 2 => distance = distance^2, default is 1"
                           "-t - number of kernel runs for performance measurement - default is 1\n"
                           "-a - address mode - what to sample outside the images: WRAP, CLAMP, MIRROR, BORDER, BLEND - default is CLAMP\n"
@@ -50,7 +53,7 @@ int main(int argc, char **argv)
         ->setSpace(static_cast<float>(args["-s"]))
         ->setMethodParameter(static_cast<int>(args["-p"]))
         ->setCoordinates(static_cast<std::string>(args["-c"]))
-        ->setScanRange(static_cast<int>(args["-r"]))
+        ->setScanRange(static_cast<float>(args["-r"]))
         ->setOutputPath(static_cast<std::string>(args["-o"]))
         ->setRuns(std::stoi(static_cast<std::string>(args["-t"])))
         ->setDistanceOrder(static_cast<int>(args["-d"]))

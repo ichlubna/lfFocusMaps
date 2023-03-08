@@ -83,6 +83,7 @@ int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
     memset(&texDescr, 0, sizeof(cudaTextureDesc));
     texDescr.filterMode = cudaFilterModeLinear;
     //cudaAddressMode = cudaAddressModeBorder;
+    texDescr.normalizedCoords = true;
     texDescr.addressMode[0] = cudaAddressMode;
     texDescr.addressMode[1] = cudaAddressMode;
     texDescr.readMode = cudaReadModeNormalizedFloat;
@@ -173,13 +174,13 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     intValues[IntConstantIDs::YUV_DISTANCE] = params.YUVDistance;
     intValues[IntConstantIDs::CLOCK_SEED] = std::clock();
     intValues[IntConstantIDs::BLEND_ADDRESS_MODE] = (addressMode == AddressMode::BLEND);
-    int range = (params.scanRange > 0) ? params.scanRange : resolution.x/2;    
-    intValues[IntConstantIDs::SCAN_RANGE] = range;
     cudaMemcpyToSymbol(Kernels::Constants::intConstants, intValues.data(), intValues.size() * sizeof(int));
     
     std::vector<float> floatValues(FloatConstantIDs::FLOAT_CONSTANTS_COUNT);
     floatValues[FloatConstantIDs::SPACE] = params.space;
+    float range = (params.scanRange > 0) ? params.scanRange : 0.5f; 
     floatValues[FloatConstantIDs::DESCENT_START_STEP] = (static_cast<float>(range)/DESCENT_START_POINTS)/4.0f;
+    floatValues[FloatConstantIDs::SCAN_RANGE] = range;
     cudaMemcpyToSymbol(Kernels::Constants::floatConstants, floatValues.data(), floatValues.size() * sizeof(float));
 
     std::vector<void*> dataPointers(DataPointersIDs::POINTERS_COUNT);
@@ -334,8 +335,8 @@ FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method)
         return FocusMethod::RANDOM;
     else if(method == "HIER")
         return FocusMethod::HIERARCHY;
-    else if(method == "SIMP")
-        return FocusMethod::SIMPLEX;
+    else if(method == "PYR")
+        return FocusMethod::PYRAMID;
     else if(method == "DESC")
         return FocusMethod::DESCENT;
     std::cerr << "Scan method set to default." << std::endl;

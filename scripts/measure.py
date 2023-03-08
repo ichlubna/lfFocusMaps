@@ -33,7 +33,7 @@ def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRa
 def run(inputDir, referenceDir, inputRange, outputDir):
     scanMethods = [ ("BF", 16), ("BF", 32), ("BF", 64), ("BF", 128), ("BF", 256)
                     ("RAND", 16), ("RAND", 32), ("RAND", 64)
-                    ("HIER", 0), ("HIER", 1), ("DESC", 0), ("DESC", 1), ("SIMP", 0), ("SIMP", 1) ]
+                    ("HIER", 0), ("HIER", 1), ("DESC", 0), ("DESC", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1) ]
     scanMetric = [ "VAR", "RANGE", "IQR", "MAD" ]
     addressModes = [ "WRAP", "CLAMP", "MIRROR", "BORDER", "BLEND" ]
     distanceOrders = [ 1,2,3,4 ]
@@ -46,7 +46,10 @@ def run(inputDir, referenceDir, inputRange, outputDir):
     os.mkdir(tempReferencePath)
 
     print("Mode, Time [ms], PSNR, SSIM, VMAF")
+    pyramidID = 0
     for scanMethod in scanMethods:
+        take input folder and  downscale according to id
+        pyramidID +=1
         for addressMode in addressModes:
             for scanSpace in np.linspace(0.5,3,30)
                 for scanMetric in scanMetrics:

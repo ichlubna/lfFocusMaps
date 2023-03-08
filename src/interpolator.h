@@ -66,7 +66,7 @@ class Interpolator
             return this;
         }
 
-        InterpolationParams* setScanRange(int range)
+        InterpolationParams* setScanRange(float range)
         {
             if(range < 0)
                 throw std::runtime_error("Focusing scanning range cannot be negative!");
@@ -107,7 +107,7 @@ class Interpolator
         bool closestViews{false};
         bool blockSampling{false};
         bool YUVDistance{false};
-        int scanRange;
+        float scanRange;
         int distanceOrder{1};
         int runs{1};
         
