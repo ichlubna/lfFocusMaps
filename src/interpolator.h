@@ -42,7 +42,7 @@ class Interpolator
             return this;
         }
         
-        InterpolationParams* setMethodParameter(int parameter)
+        InterpolationParams* setMethodParameter(float parameter)
         {
             methodParameter = parameter; 
             return this;
@@ -53,7 +53,7 @@ class Interpolator
             closestViews = closest;
             return this;
         }
-
+        
         InterpolationParams* setBlockSampling(bool block=true)
         {
             blockSampling = block;
@@ -103,7 +103,7 @@ class Interpolator
         FocusMethod method;
         float space;
         ScanMetric metric;
-        int methodParameter;
+        float methodParameter;
         bool closestViews{false};
         bool blockSampling{false};
         bool YUVDistance{false};
@@ -117,13 +117,15 @@ class Interpolator
         ScanMetric parseMetric(std::string inputMetric);
     };
 
-    Interpolator(std::string inputPath, std::string mode);
+    Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips);
     ~Interpolator();
     void interpolate(InterpolationParams params);
 
     private:
     static constexpr int OUTPUT_SURFACE_COUNT{2};
     AddressMode addressMode{CLAMP};
+    bool useSecondaryFolder{false};
+    bool useMips{false};
     std::vector<int*> surfaceInputArrays;
     std::vector<int*> surfaceOutputArrays;
     void *surfaceObjectsArr;

@@ -6,7 +6,8 @@ int main(int argc, char **argv)
     Arguments args(argc, argv);
     std::string helpText{ "Usage:\n"
                           "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
-                          "-i - folder with lf grid images - named as column_row.extension, e.g. 01_12.jpg\n"
+                          "-i - folder with lf grid images - named as column_row.extension, e.g.: 01_12.jpg\n"
+                          "-l - uses secondary folder with same filenames for focusing, e.g.: -i my/folder => my contains folder and folder_sec \n"
                           "-c - camera position in normalized coordinates of the grid in format: x_y, e.g., 0.5_0.1\n"
                           "-o - output path\n"
                           "-m - method:\n"
@@ -17,7 +18,7 @@ int main(int argc, char **argv)
                           "     DESC (3-way descent) - parameter: 1 randomized, 0 uniform\n"
                           "     PYR (pyramid approach) - parameter: 1 randomized, 0 uniform\n"
                           "     The first phase samples downscaled images that need to be stored in folder\n"
-                          "     named the same as input folder with added _down\n"
+                          "     named the same as input folder with same filenames\n"
                           "     e.g.: -i my/folder => my contains folder and folder_down\n"
                           "-p - method parameter\n"
                           "-e - scan metric to evaluate the color dispersion:\n"
@@ -51,7 +52,7 @@ int main(int argc, char **argv)
         .setMethod(static_cast<std::string>(args["-m"]))
         ->setMetric(static_cast<std::string>(args["-e"]))
         ->setSpace(static_cast<float>(args["-s"]))
-        ->setMethodParameter(static_cast<int>(args["-p"]))
+        ->setMethodParameter(static_cast<float>(args["-p"]))
         ->setCoordinates(static_cast<std::string>(args["-c"]))
         ->setScanRange(static_cast<float>(args["-r"]))
         ->setOutputPath(static_cast<std::string>(args["-o"]))
@@ -59,7 +60,8 @@ int main(int argc, char **argv)
         ->setDistanceOrder(static_cast<int>(args["-d"]))
         ->setBlockSampling(static_cast<bool>(args["-b"]))
         ->setClosestViews(static_cast<bool>(args["-f"]))
-        ->setYUVDistance(static_cast<bool>(args["-y"]));
+        ->setYUVDistance(static_cast<bool>(args["-y"]))
+        ->setSecondaryFocus(static_cast<bool>(args["-l"]));
         interpolator.interpolate(params);
     }
     catch(const std::exception &e)

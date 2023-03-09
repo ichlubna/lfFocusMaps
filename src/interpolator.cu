@@ -31,7 +31,7 @@ class Timer
     cudaEvent_t startEvent, stopEvent;
 };
 
-Interpolator::Interpolator(std::string inputPath, std::string mode) : input{inputPath}
+Interpolator::Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips) : useSecondaryFolder{useSecondary}, useMips{mips}, input{inputPath}
 {
     addressMode = parseAddressMode(mode);
     init();
@@ -123,7 +123,6 @@ void Interpolator::loadGPUData()
 
     std::cout << "Uploading data to GPU..." << std::endl;
     LoadingBar bar(lfLoader.imageCount()+OUTPUT_SURFACE_COUNT);
-
     
     std::vector<cudaTextureObject_t> textures;
     for(int col=0; col<colsRows.x; col++)
@@ -135,6 +134,16 @@ void Interpolator::loadGPUData()
 
     cudaMalloc(&textureObjectsArr, textures.size()*sizeof(cudaTextureObject_t));
     cudaMemcpy(textureObjectsArr, textures.data(), textures.size()*sizeof(cudaTextureObject_t), cudaMemcpyHostToDevice); 
+
+    if(useSecondaryFolder)
+    {
+        aaa
+    }
+    
+    if(useMips)
+    {
+        aaa
+    }
  
     std::vector<cudaSurfaceObject_t> surfaces;
 /*    for(int col=0; col<colsRows.x; col++)
@@ -168,7 +177,6 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     intValues[IntConstantIDs::DISTANCE_ORDER] = params.distanceOrder;
     intValues[IntConstantIDs::SCAN_METRIC] = params.metric;
     intValues[IntConstantIDs::FOCUS_METHOD] = params.method;
-    intValues[IntConstantIDs::FOCUS_METHOD_PARAMETER] = params.methodParameter;
     intValues[IntConstantIDs::CLOSEST_VIEWS] = params.closestViews;
     intValues[IntConstantIDs::BLOCK_SAMPLING] = params.blockSampling;
     intValues[IntConstantIDs::YUV_DISTANCE] = params.YUVDistance;
@@ -181,11 +189,13 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     float range = (params.scanRange > 0) ? params.scanRange : 0.5f; 
     floatValues[FloatConstantIDs::DESCENT_START_STEP] = (static_cast<float>(range)/DESCENT_START_POINTS)/4.0f;
     floatValues[FloatConstantIDs::SCAN_RANGE] = range;
+    floatValues[FloatConstantIDs::FOCUS_METHOD_PARAMETER] = params.methodParameter;
     cudaMemcpyToSymbol(Kernels::Constants::floatConstants, floatValues.data(), floatValues.size() * sizeof(float));
 
     std::vector<void*> dataPointers(DataPointersIDs::POINTERS_COUNT);
     dataPointers[DataPointersIDs::SURFACES] = reinterpret_cast<void*>(surfaceObjectsArr);
     dataPointers[DataPointersIDs::TEXTURES] = reinterpret_cast<void*>(textureObjectsArr);
+    dataPointers[DataPointersIDs::SECONDARY_TEXTURES] = reinterpret_cast<void*>(textureObjectsArr);
     dataPointers[DataPointersIDs::WEIGHTS] = reinterpret_cast<void*>(weightsGPU);
     dataPointers[DataPointersIDs::CLOSEST_WEIGHTS] = reinterpret_cast<void*>(closestFramesWeightsGPU);
     dataPointers[DataPointersIDs::CLOSEST_COORDS] = reinterpret_cast<void*>(closestFramesCoordsLinearGPU);
@@ -214,12 +224,14 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
 
 void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
 {
+    float aspect = static_cast<float>(resolution.x)/resolution.y;
     std::vector<float2> offsets(colsRows.x*colsRows.y);
     for(int col=0; col<colsRows.x; col++)
         for(int row=0; row<colsRows.y; row++)
         {
             int gridID = row*colsRows.x + col; 
             float2 offset{(col-viewCoordinates.x)/colsRows.x, (row-viewCoordinates.y)/colsRows.y};
+            offset.y *= aspect;
             offsets[gridID] = offset;
         }
     cudaMemcpyToSymbol(Kernels::offsets, offsets.data(), offsets.size() * sizeof(float2));
@@ -352,7 +364,7 @@ void Interpolator::interpolate(InterpolationParams params)
     loadGPUConstants(params);
     
     dim3 dimBlock(16, 16, 1);
-    dim3 dimGrid(resolution.x/dimBlock.x, resolution.y/dimBlock.y, 1);
+    dim3 dimGrid(glm::ceil(static_cast<float>(resolution.x)/dimBlock.x), glm::ceil(static_cast<float>(resolution.y)/dimBlock.y), 1);
 
     std::cout << "Elapsed time: "<<std::endl;
     float avgTime{0};

@@ -8,7 +8,6 @@ namespace Kernels
     constexpr int BLOCK_SAMPLE_COUNT{5};
     constexpr int PIXEL_SAMPLE_COUNT{1};
     constexpr int CLOSEST_COUNT{4}; 
-    __device__ constexpr bool GUESS_HANDLES{false};
 
     namespace Constants
     {
@@ -19,7 +18,6 @@ namespace Kernels
         __device__ int distanceOrder(){return intConstants[IntConstantIDs::DISTANCE_ORDER];}
         __device__ ScanMetric scanMetric(){return static_cast<ScanMetric>(intConstants[IntConstantIDs::SCAN_METRIC]);}
         __device__ FocusMethod focusMethod(){return static_cast<FocusMethod>(intConstants[IntConstantIDs::FOCUS_METHOD]);}
-        __device__ int focusMethodParameter(){return intConstants[IntConstantIDs::FOCUS_METHOD_PARAMETER];}
         __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
         __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
         __device__ bool YUVDistance(){return intConstants[IntConstantIDs::YUV_DISTANCE];}
@@ -29,6 +27,7 @@ namespace Kernels
         __constant__ void* dataPointers[DataPointersIDs::POINTERS_COUNT];
         __device__ cudaSurfaceObject_t* surfaces(){return reinterpret_cast<cudaSurfaceObject_t*>(dataPointers[DataPointersIDs::SURFACES]);}
         __device__ cudaTextureObject_t* textures(){return reinterpret_cast<cudaTextureObject_t*>(dataPointers[DataPointersIDs::TEXTURES]);}
+        __device__ cudaTextureObject_t* secondaryTextures(){return reinterpret_cast<cudaTextureObject_t*>(dataPointers[DataPointersIDs::SECONDARY_TEXTURES]);}
         __device__ float* closestWeights(){return reinterpret_cast<float*>(dataPointers[DataPointersIDs::CLOSEST_WEIGHTS]);}
         __device__ float* weights(){return reinterpret_cast<float*>(dataPointers[DataPointersIDs::WEIGHTS]);}
         __device__ int* closestCoords(){return reinterpret_cast<int*>(dataPointers[DataPointersIDs::CLOSEST_COORDS]);}
@@ -37,6 +36,7 @@ namespace Kernels
         __device__ float scanSpace(){return floatConstants[FloatConstantIDs::SPACE];}
         __device__ float descentStartStep(){return floatConstants[FloatConstantIDs::DESCENT_START_STEP];}
         __device__ float scanRange(){return floatConstants[FloatConstantIDs::SCAN_RANGE];}
+        __device__ float focusMethodParameter(){return floatConstants[FloatConstantIDs::FOCUS_METHOD_PARAMETER];}
 
         __constant__ float descentStartPoints[DESCENT_START_POINTS];
         __constant__ float hierarchySteps[HIERARCHY_DIVISIONS];
@@ -261,49 +261,45 @@ namespace Kernels
 
         __device__ void store(uchar4 px, int imageID, int2 coords)
         {
-            if constexpr (GUESS_HANDLES)
-                surf2Dwrite<uchar4>(px, imageID+1, coords.x*sizeof(uchar4), coords.y);
-            else    
-                surf2Dwrite<uchar4>(px, Constants::surfaces()[imageID], coords.x*sizeof(uchar4), coords.y);
+            surf2Dwrite<uchar4>(px, Constants::surfaces()[imageID], coords.x*sizeof(uchar4), coords.y);
         }
 
  /*       template <typename T>
         __device__ PixelArray<T> load(int imageID, int2 coords)
         {
             constexpr int MULT_FOUR_SHIFT{2};
-            if constexpr (GUESS_HANDLES)
-                return PixelArray<T>{surf2Dread<uchar4>(imageID+1, coords.x<<MULT_FOUR_SHIFT, coords.y, cudaBoundaryModeClamp)};
-            else    
-                return PixelArray<T>{surf2Dread<uchar4>(Constants::surfaces()[imageID], coords.x<<MULT_FOUR_SHIFT, coords.y, cudaBoundaryModeClamp)};
+            return PixelArray<T>{surf2Dread<uchar4>(Constants::surfaces()[imageID], coords.x<<MULT_FOUR_SHIFT, coords.y, cudaBoundaryModeClamp)};
         }
    */    
          
         template <typename T>
+        __device__ PixelArray<T> loadColor(int imageID, float2 coords)
+        {
+            int id = Constants::secondaryTextures()[imageID];
+            return PixelArray<T>{tex2D<float4>(id, coords.x, coords.y)}*UCHAR_MAX;
+        }
+        
+        template <typename T>
         __device__ PixelArray<T> load(int imageID, float2 coords)
         {
-            int id{0}; 
-            if constexpr (GUESS_HANDLES)
-                id = imageID+1;
-            else
-                id = Constants::textures()[imageID];
+            int id = Constants::textures()[imageID];
             if(Constants::blendAddressMode())
             {
-                constexpr float SPREAD{0.1f};
-                float2 offset = {0,0};
+                constexpr float SPREAD{0.0015f};
+                float offset{0};
                 if(coords.x > 1.0 || coords.x < 0.0)
-                    offset.y = coords.x-floor(coords.x);
+                    offset += floor(coords.x)*SPREAD;
                 if(coords.y > 1.0 || coords.y < 0.0)
-                    offset.x = coords.y-floor(coords.y);
-                offset.x *= SPREAD;
-                offset.y *= SPREAD;
-                auto p1 = PixelArray<T>{tex2D<float4>(id, coords.x+offset.x, coords.y+offset.y)}*UCHAR_MAX; 
-                auto p2 = PixelArray<T>{tex2D<float4>(id, coords.x-offset.x, coords.y-offset.y)}*UCHAR_MAX;
-                return (p1+p2)/2;
+                    offset += floor(coords.y)*SPREAD;
+                PixelArray<T> pixel;
+                const float2 offsets[4] = {{offset, offset}, {offset, -offset}, {-offset, -offset}, {-offset, offset}};
+                for(int i=0; i<4; i++)
+                    pixel += PixelArray<T>{tex2D<float4>(id, coords.x+offsets[i].x, coords.y+offsets[i].y)}; 
+                return (pixel/4)*UCHAR_MAX;
             }    
             else
                 return PixelArray<T>{tex2D<float4>(id, coords.x, coords.y)}*UCHAR_MAX;
-        }
-        
+        } 
     }
 
     namespace ScanMetrics
@@ -582,7 +578,7 @@ namespace Kernels
                 for(int i=0; i<CLOSEST_COUNT; i++) 
                 {
                     gridID = closestCoords[i];
-                    auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus))};
+                    auto px{Pixel::loadColor<float>(gridID, focusCoords(gridID, coords, focus))};
                     sum.addWeighted(weights[i], px);
                 }
             }
@@ -594,7 +590,7 @@ namespace Kernels
                     gridID = row*cr.x;
                     for(int col=0; col<cr.x; col++) 
                     {
-                        auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus))};
+                        auto px{Pixel::loadColor<float>(gridID, focusCoords(gridID, coords, focus))};
                         sum.addWeighted(weights[gridID], px);
                         gridID++;
                     }
