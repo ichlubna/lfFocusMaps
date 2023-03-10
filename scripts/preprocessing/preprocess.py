@@ -2,7 +2,6 @@ import numpy as np
 import sys
 import os
 import math
-import traceback
 import cv2
 
 def resize(img, amount):
@@ -41,14 +40,27 @@ def equalize(img):
 
 def sine(img, frequency):
     rows,cols,channels = img.shape
+    yuvImg = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb);
+    originalImg = yuvImg.copy()
     for i in range(rows):
         for j in range(cols):
             for c in range(channels):
-                p = img[i,j,c]
-                img[i,j,c] = math.sin(frequency*(p/255.0)*math.pi*2)*255
-    return img
+            #for c in range(1):
+                p = yuvImg[i,j,c]
+                yuvImg[i,j,c] = math.sin(frequency*(p/255.0)*math.pi*2)*255
+    img = cv2.addWeighted(yuvImg, 0.05, originalImg, 0.95, 0)
+    return cv2.cvtColor(img, cv2.COLOR_YCrCb2BGR);
 
-def run(inputDir, outputDir, method):
+def denoise(img):
+    return cv2.fastNlMeansDenoisingColored(img,None,10,10,7,21)
+
+def median(img):
+    return cv2.medianBlur(img,3)
+
+def bilateral(img):
+    return cv2.bilateralFilter(img, 16, 8, 16)
+
+def preprocess(inputDir, outputDir, method):
     files = sorted(os.listdir(inputDir))
     for file in files:
         inputFile = os.path.join(inputDir, file)
@@ -68,18 +80,15 @@ def run(inputDir, outputDir, method):
         elif method == "EQUAL":
             result = equalize(img)
         elif method == "SINE_FAST":
-            result = sine(img, 5)
+            result = sine(img, 3)
         elif method == "SINE_SLOW":
-            result = sine(img, 2)
+            result = sine(img, 1)
+        elif method == "DENOISE":
+            result = denoise(img)
+        elif method == "MEDIAN":
+            result = median(img)
+        elif method == "BILATERAL":
+            result = bilateral(img)
         else:
             raise Exception("The requested method is not available.")
         cv2.imwrite(outputFile, result)
-try:
-    if len(sys.argv) != 4 or sys.argv[1] == "-h" or sys.argv[1] == "--help":
-        print("Provide arguments for input light field, output directory and preprocessing method (CONTRAST, EDGE, SHARPEN, RESIZE_HALF, RESIZE_QUARTER): python preprocess.py ./path/input ./path/output METHOD")
-        exit(0)
-    run(sys.argv[1], sys.argv[2], sys.argv[3])
-
-except Exception as e:
-    print(e)
-    print(traceback.format_exc())

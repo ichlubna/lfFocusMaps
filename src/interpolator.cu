@@ -148,14 +148,14 @@ void Interpolator::loadGPUData()
     resolution = info.resolution;
 
     if(useSecondaryFolder)
-        loadTextures(input+"_sec", &secondaryTextureObjectsArr);
+        loadTextures(path+"_sec", &secondaryTextureObjectsArr);
     else
         secondaryTextureObjectsArr = textureObjectsArr;
     
     if(useMips)
-        loadTextures(input+"_sec", &secondaryTextureObjectsArr);
+        loadTextures(path+"_down", &mipTextureObjectsArr);
     else
-        secondaryTextureObjectsArr = textureObjectsArr;
+        mipTextureObjectsArr = textureObjectsArr;
  
     std::vector<cudaSurfaceObject_t> surfaces;
     for(int i=0; i<OUTPUT_SURFACE_COUNT; i++)
