@@ -46,7 +46,8 @@ int main(int argc, char **argv)
     
     try
     {
-        Interpolator interpolator(static_cast<std::string>(args["-i"]), static_cast<std::string>(args["-a"]));
+        bool useMips = static_cast<std::string>(args["-m"]) == "PYR";
+        Interpolator interpolator(static_cast<std::string>(args["-i"]), static_cast<std::string>(args["-a"]), static_cast<bool>(args["-l"]), useMips);
         Interpolator::InterpolationParams params;
         params
         .setMethod(static_cast<std::string>(args["-m"]))
@@ -60,8 +61,7 @@ int main(int argc, char **argv)
         ->setDistanceOrder(static_cast<int>(args["-d"]))
         ->setBlockSampling(static_cast<bool>(args["-b"]))
         ->setClosestViews(static_cast<bool>(args["-f"]))
-        ->setYUVDistance(static_cast<bool>(args["-y"]))
-        ->setSecondaryFocus(static_cast<bool>(args["-l"]));
+        ->setYUVDistance(static_cast<bool>(args["-y"]));
         interpolator.interpolate(params);
     }
     catch(const std::exception &e)

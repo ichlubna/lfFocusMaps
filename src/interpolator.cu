@@ -114,53 +114,55 @@ int* Interpolator::loadImageToArray(const uint8_t *data, glm::ivec3 size)
     return reinterpret_cast<int*>(arr);
 }
 
-void Interpolator::loadGPUData()
+Interpolator::TexturesInfo Interpolator::loadTextures(std::string input, void **textures)
 {
     LfLoader lfLoader;
     lfLoader.loadData(input);
-    colsRows = lfLoader.getColsRows();
-    resolution = lfLoader.imageResolution();
+    auto textColsRows = lfLoader.getColsRows();
+    auto textResolution = lfLoader.imageResolution();
 
-    std::cout << "Uploading data to GPU..." << std::endl;
-    LoadingBar bar(lfLoader.imageCount()+OUTPUT_SURFACE_COUNT);
+    std::cout << "Uploading content of "+input+" to GPU..." << std::endl;
+    LoadingBar bar(lfLoader.imageCount());
     
-    std::vector<cudaTextureObject_t> textures;
-    for(int col=0; col<colsRows.x; col++)
-        for(int row=0; row<colsRows.y; row++)
+    std::vector<cudaTextureObject_t> textureObjects;
+    for(int col=0; col<textColsRows.x; col++)
+        for(int row=0; row<textColsRows.y; row++)
         { 
-            textures.push_back(createTextureObject(lfLoader.image({col, row}).data(), resolution)); 
+            textureObjects.push_back(createTextureObject(lfLoader.image({col, row}).data(), textResolution)); 
             bar.add();
         }
 
-    cudaMalloc(&textureObjectsArr, textures.size()*sizeof(cudaTextureObject_t));
-    cudaMemcpy(textureObjectsArr, textures.data(), textures.size()*sizeof(cudaTextureObject_t), cudaMemcpyHostToDevice); 
+    cudaMalloc(textures, textureObjects.size()*sizeof(cudaTextureObject_t));
+    cudaMemcpy(*textures, textureObjects.data(), textureObjects.size()*sizeof(cudaTextureObject_t), cudaMemcpyHostToDevice); 
+    return {textColsRows, textResolution};
+}
+
+void Interpolator::loadGPUData()
+{
+    std::string path = input;
+    if(path.back() == '/')
+        path.pop_back();
+
+    auto info = loadTextures(input, &textureObjectsArr);
+    colsRows = info.colsRows;
+    resolution = info.resolution;
 
     if(useSecondaryFolder)
-    {
-        aaa
-    }
+        loadTextures(input+"_sec", &secondaryTextureObjectsArr);
+    else
+        secondaryTextureObjectsArr = textureObjectsArr;
     
     if(useMips)
-    {
-        aaa
-    }
+        loadTextures(input+"_sec", &secondaryTextureObjectsArr);
+    else
+        secondaryTextureObjectsArr = textureObjectsArr;
  
     std::vector<cudaSurfaceObject_t> surfaces;
-/*    for(int col=0; col<colsRows.x; col++)
-        for(int row=0; row<colsRows.y; row++)
-        {
-            auto surface = createSurfaceObject(resolution, lfLoader.image({col, row}).data());
-            surfaces.push_back(surface.first);  
-            surfaceInputArrays.push_back(surface.second);
-            bar.add();
-        }
-*/
     for(int i=0; i<OUTPUT_SURFACE_COUNT; i++)
     {
         auto surface = createSurfaceObject(resolution);
         surfaces.push_back(surface.first);  
         surfaceOutputArrays.push_back(surface.second);
-        bar.add();
     }
     cudaMalloc(&surfaceObjectsArr, surfaces.size()*sizeof(cudaTextureObject_t));
     cudaMemcpy(surfaceObjectsArr, surfaces.data(), surfaces.size()*sizeof(cudaSurfaceObject_t), cudaMemcpyHostToDevice);
@@ -195,7 +197,8 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     std::vector<void*> dataPointers(DataPointersIDs::POINTERS_COUNT);
     dataPointers[DataPointersIDs::SURFACES] = reinterpret_cast<void*>(surfaceObjectsArr);
     dataPointers[DataPointersIDs::TEXTURES] = reinterpret_cast<void*>(textureObjectsArr);
-    dataPointers[DataPointersIDs::SECONDARY_TEXTURES] = reinterpret_cast<void*>(textureObjectsArr);
+    dataPointers[DataPointersIDs::SECONDARY_TEXTURES] = reinterpret_cast<void*>(secondaryTextureObjectsArr);
+    dataPointers[DataPointersIDs::MIP_TEXTURES] = reinterpret_cast<void*>(mipTextureObjectsArr);
     dataPointers[DataPointersIDs::WEIGHTS] = reinterpret_cast<void*>(weightsGPU);
     dataPointers[DataPointersIDs::CLOSEST_WEIGHTS] = reinterpret_cast<void*>(closestFramesWeightsGPU);
     dataPointers[DataPointersIDs::CLOSEST_COORDS] = reinterpret_cast<void*>(closestFramesCoordsLinearGPU);

@@ -11,6 +11,12 @@ namespace Kernels
 
     namespace Constants
     {
+        enum TextureMode{NORMAL, MIP, SECONDARY};
+        __device__ TextureMode textureMode{NORMAL};
+        __device__ void setNormalTextures(){textureMode = NORMAL;};
+        __device__ void setMipTextures(){textureMode = MIP;};
+        __device__ void setSecondaryTextures(){textureMode = SECONDARY;};
+
         __constant__ int intConstants[IntConstantIDs::INT_CONSTANTS_COUNT];
         __device__ int2 imgRes(){return {intConstants[IntConstantIDs::IMG_RES_X], intConstants[IntConstantIDs::IMG_RES_Y]};}
         __device__ int2 colsRows(){return{intConstants[IntConstantIDs::COLS], intConstants[IntConstantIDs::ROWS]};}
@@ -26,8 +32,21 @@ namespace Kernels
         
         __constant__ void* dataPointers[DataPointersIDs::POINTERS_COUNT];
         __device__ cudaSurfaceObject_t* surfaces(){return reinterpret_cast<cudaSurfaceObject_t*>(dataPointers[DataPointersIDs::SURFACES]);}
-        __device__ cudaTextureObject_t* textures(){return reinterpret_cast<cudaTextureObject_t*>(dataPointers[DataPointersIDs::TEXTURES]);}
-        __device__ cudaTextureObject_t* secondaryTextures(){return reinterpret_cast<cudaTextureObject_t*>(dataPointers[DataPointersIDs::SECONDARY_TEXTURES]);}
+        __device__ cudaTextureObject_t* textures()
+        {
+            switch(textureMode)
+            {
+                case NORMAL:
+                    return reinterpret_cast<cudaTextureObject_t*>(dataPointers[DataPointersIDs::TEXTURES]);
+                break;
+                case MIP:
+                    return reinterpret_cast<cudaTextureObject_t*>(dataPointers[DataPointersIDs::MIP_TEXTURES]);
+                break;
+                case SECONDARY:
+                    return reinterpret_cast<cudaTextureObject_t*>(dataPointers[DataPointersIDs::SECONDARY_TEXTURES]);
+                break;
+            }
+        }
         __device__ float* closestWeights(){return reinterpret_cast<float*>(dataPointers[DataPointersIDs::CLOSEST_WEIGHTS]);}
         __device__ float* weights(){return reinterpret_cast<float*>(dataPointers[DataPointersIDs::WEIGHTS]);}
         __device__ int* closestCoords(){return reinterpret_cast<int*>(dataPointers[DataPointersIDs::CLOSEST_COORDS]);}
@@ -264,21 +283,6 @@ namespace Kernels
             surf2Dwrite<uchar4>(px, Constants::surfaces()[imageID], coords.x*sizeof(uchar4), coords.y);
         }
 
- /*       template <typename T>
-        __device__ PixelArray<T> load(int imageID, int2 coords)
-        {
-            constexpr int MULT_FOUR_SHIFT{2};
-            return PixelArray<T>{surf2Dread<uchar4>(Constants::surfaces()[imageID], coords.x<<MULT_FOUR_SHIFT, coords.y, cudaBoundaryModeClamp)};
-        }
-   */    
-         
-        template <typename T>
-        __device__ PixelArray<T> loadColor(int imageID, float2 coords)
-        {
-            int id = Constants::secondaryTextures()[imageID];
-            return PixelArray<T>{tex2D<float4>(id, coords.x, coords.y)}*UCHAR_MAX;
-        }
-        
         template <typename T>
         __device__ PixelArray<T> load(int imageID, float2 coords)
         {
@@ -578,7 +582,7 @@ namespace Kernels
                 for(int i=0; i<CLOSEST_COUNT; i++) 
                 {
                     gridID = closestCoords[i];
-                    auto px{Pixel::loadColor<float>(gridID, focusCoords(gridID, coords, focus))};
+                    auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus))};
                     sum.addWeighted(weights[i], px);
                 }
             }
@@ -590,7 +594,7 @@ namespace Kernels
                     gridID = row*cr.x;
                     for(int col=0; col<cr.x; col++) 
                     {
-                        auto px{Pixel::loadColor<float>(gridID, focusCoords(gridID, coords, focus))};
+                        auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus))};
                         sum.addWeighted(weights[gridID], px);
                         gridID++;
                     }
@@ -774,6 +778,7 @@ namespace Kernels
         //loadWeightsSync<half>(weights, localWeights.data, gridSize()/2);
 
         float focus{0};
+        Constants::setSecondaryTextures();
         switch(Constants::focusMethod())
         {
             case ONE_DISTANCE:
@@ -811,7 +816,9 @@ namespace Kernels
 
             default:
             break;
-        }        
+        }       
+
+        Constants::setNormalTextures(); 
         uchar4 color{0};
         if(Constants::closestViews())
             color = FocusLevel::render<true>(coords, focus);

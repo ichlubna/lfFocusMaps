@@ -122,6 +122,12 @@ class Interpolator
     void interpolate(InterpolationParams params);
 
     private:
+    class TexturesInfo
+    {
+        public:
+        glm::ivec2 colsRows;
+        glm::ivec3 resolution;
+    };
     static constexpr int OUTPUT_SURFACE_COUNT{2};
     AddressMode addressMode{CLAMP};
     bool useSecondaryFolder{false};
@@ -130,6 +136,8 @@ class Interpolator
     std::vector<int*> surfaceOutputArrays;
     void *surfaceObjectsArr;
     void *textureObjectsArr;
+    void *secondaryTextureObjectsArr;
+    void *mipTextureObjectsArr;
     const std::vector<std::string> fileNames{"focusMap", "renderImage"};
     float *weightsGPU;
     float *closestFramesWeightsGPU;
@@ -142,6 +150,7 @@ class Interpolator
     void init();
     void loadGPUOffsets(glm::vec2 viewCoordinates);
     void loadGPUData();
+    TexturesInfo loadTextures(std::string input, void **textures);
     void loadGPUConstants(InterpolationParams params);
     void loadGPUWeights(glm::vec2 viewCoordinates);
     int* loadImageToArray(const uint8_t *data, glm::ivec3 size);
