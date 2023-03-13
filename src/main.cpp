@@ -27,13 +27,18 @@ int main(int argc, char **argv)
                           "     IQR - inter-quartile range\n"
                           "     MAD - approximation of mean absolute difference\n"
                           "-s   scan space - density of the sampling by exponential function y=x^s, default s=1\n"
-                          "-y   use weighted YUV color distance\n"
+                          "-y   color distance metric:\n"  
+                          "     RGB - Chebyshev RGB distance (default)\n"
+                          "     Y - difference between Y values (intensity without color)\n"
+                          "     YUV - Chebyshev YUV\n"
+                          "     YUVw - Weighted Chebyshev YUV - more focus on colors\n"
                           "-b - block sampling - uses also neighboring pixels for matching\n"
                           "-f - use faster variant with only four closest views\n"
                           "-r - normalized scanning range - the maximum disparity between input images, default is half of image width - 0.5\n"
                           "-d - order of the distance function, e.g., 2 => distance = distance^2, default is 1"
                           "-t - number of kernel runs for performance measurement - default is 1\n"
                           "-a - address mode - what to sample outside the images: WRAP, CLAMP, MIRROR, BORDER, BLEND - default is CLAMP\n"
+                          "-n - will not store focus map\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;
@@ -61,7 +66,8 @@ int main(int argc, char **argv)
         ->setDistanceOrder(static_cast<int>(args["-d"]))
         ->setBlockSampling(static_cast<bool>(args["-b"]))
         ->setClosestViews(static_cast<bool>(args["-f"]))
-        ->setYUVDistance(static_cast<bool>(args["-y"]));
+        ->setColorDistance(static_cast<std::string>(args["-y"]))
+        ->setNoMap(static_cast<bool>(args["-n"]));
         interpolator.interpolate(params);
     }
     catch(const std::exception &e)

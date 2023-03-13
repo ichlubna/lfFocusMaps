@@ -26,8 +26,9 @@ namespace Kernels
         __device__ FocusMethod focusMethod(){return static_cast<FocusMethod>(intConstants[IntConstantIDs::FOCUS_METHOD]);}
         __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
         __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
-        __device__ bool YUVDistance(){return intConstants[IntConstantIDs::YUV_DISTANCE];}
+        __device__ ColorDistance YUVDistance(){return static_cast<ColorDistance>(intConstants[IntConstantIDs::YUV_DISTANCE]);}
         __device__ bool blendAddressMode(){return intConstants[IntConstantIDs::BLEND_ADDRESS_MODE];}
+        __device__ bool noMap(){return intConstants[IntConstantIDs::NO_MAP];}
         __device__ int ClockSeed(){return intConstants[IntConstantIDs::CLOCK_SEED];}
         
         __constant__ void* dataPointers[DataPointersIDs::POINTERS_COUNT];
@@ -64,57 +65,7 @@ namespace Kernels
 
     __device__ constexpr int MAX_IMAGES{256};
     __constant__ float2 offsets[MAX_IMAGES];
-    extern __shared__ half localMemory[];
-
-    template <typename TT>
-    class LocalArray
-    {
-        public:
-        __device__ LocalArray(TT* inData) : data{inData}{}; 
-        __device__ TT* ptr(int index)
-        {
-            return data+index;
-        }
-        
-        template <typename T>
-        __device__ T* ptr(int index) 
-        {
-            return reinterpret_cast<T*>(ptr(index));
-        }  
-
-        __device__ TT& ref(int index)
-        {
-            return *ptr(index);
-        }
-        
-        template <typename T>
-        __device__ T& ref(int index)
-        {
-            return *ptr<T>(index);
-        }
-     
-        TT *data;
-    };
-
-    template <typename T>
-    class MemoryPartitioner
-    {
-        public:
-        __device__ MemoryPartitioner(T *inMemory)
-        {
-            memory = inMemory; 
-        }
-
-        __device__ LocalArray<T> array(int size)
-        {
-            T *arr = &(memory[consumed]);
-            consumed += size;
-            return {arr};
-        }
-        private:
-        T *memory;
-        unsigned int consumed{0};
-    };
+    //extern __shared__ half localMemory[];
 
      template <typename T>
         class PixelArray
@@ -135,7 +86,7 @@ namespace Kernels
                 return result;
             }
            
-            __device__ void addWeighted(T weight, PixelArray<T> value) 
+            __device__ void addWeighted(T weight, PixelArray<T> &value) 
             {    
                 for(int j=0; j<CHANNEL_COUNT; j++)
                     //channels[j] += value[j]*weight;
@@ -185,58 +136,6 @@ namespace Kernels
             }
         };
 
-    class Indexer
-    {
-        public:
-        __device__ int linearIDBase(int id, int size)
-        {
-            return linearCoord = id*size;
-        } 
-        
-        __device__ int linearID(int id, int size)
-        {
-            return linearCoord + id*size;
-        }
-        
-        __device__ int linearCoordsBase(int2 coords, int width)
-        {
-            return linearCoord = coords.y*width + coords.x;
-        }
-
-        __device__ int linearCoords(int2 coords, int width)
-        {
-            return linearCoord + coords.y*width + coords.x;
-        }
-       
-        __device__ int linearCoordsY(int coordY, int width)
-        {
-            return linearCoord + coordY*width;
-        }
-
-        __device__ int getBase()
-        {
-            return linearCoord;
-        }
-
-        private:
-        int linearCoord{0};
-    };
-
-    template <typename T>
-    __device__ static void loadWeightsSync(T *inData, T *data, int size)
-    {
-        Indexer id;
-        id.linearCoordsBase(int2{static_cast<int>(threadIdx.x), static_cast<int>(threadIdx.y)}, blockDim.x);
-        int i = id.getBase();
-        if(i < size)
-        {
-            int *intLocal = reinterpret_cast<int*>(data);
-            int *intIn = reinterpret_cast<int*>(inData);
-            intLocal[i] = intIn[i]; 
-        }
-        __syncthreads();
-    }
-
     __device__ bool coordsOutside(int2 coords)
     {
         int2 resolution = Constants::imgRes();
@@ -254,27 +153,55 @@ namespace Kernels
     namespace Pixel
     {
         //source: https://learn.microsoft.com/en-us/windows/win32/medfound/recommended-8-bit-yuv-formats-for-video-rendering
-        __device__ uchar4 RGBtoYUV(uchar4 rgb)
+        template <typename T>        
+        __device__ uchar4 RGBtoYUV(PixelArray<T> &rgb)
         {
             uchar4 yuv;
-            yuv.x = ( (  66 * rgb.x + 129 * rgb.y +  25 * rgb.z + 128) >> 8) +  16;
-            yuv.y = ( ( -38 * rgb.x -  74 * rgb.y + 112 * rgb.z + 128) >> 8) + 128;
-            yuv.z = ( ( 112 * rgb.x -  94 * rgb.y -  18 * rgb.z + 128) >> 8) + 128;
+            yuv.x = ( __float2uint_rn(  66 * rgb[0] + 129 * rgb[1] +  25 * rgb[2] + 128) >> 8) +  16;
+            yuv.y = ( __float2uint_rn( -38 * rgb[0] -  74 * rgb[1] + 112 * rgb[2] + 128) >> 8) + 128;
+            yuv.z = ( __float2uint_rn( 112 * rgb[0] -  94 * rgb[1] -  18 * rgb[2] + 128) >> 8) + 128;
             return yuv;
         }
+        
+        template <typename T>        
+        __device__ unsigned char RGBtoY(PixelArray<T> &rgb)
+        {
+            return (__float2uint_rn(  66 * rgb[0] + 129 * rgb[1] +  25 * rgb[2] + 128) >> 8) +  16;
+        }
+
 
         template <typename T>
-        __device__ float distance(PixelArray<T> a, PixelArray<T> b)
+        __device__ float distance(PixelArray<T> &a, PixelArray<T> &b)
         {
             float dist{0};
-            if(Constants::YUVDistance())
+            switch(Constants::YUVDistance())
             {
-                auto yuvA = RGBtoYUV(a.uch4());
-                auto yuvB = RGBtoYUV(b.uch4());
-                dist = max(max(abs(yuvA.x-yuvB.x)>>2, abs(yuvA.y-yuvB.y)), abs(yuvA.z-yuvB.z));
+                case RGB:
+                {
+                    dist = max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
+                }
+                break;
+                
+                case YUV:            
+                {
+                    auto yuvA = RGBtoYUV<T>(a);
+                    auto yuvB = RGBtoYUV<T>(b);
+                    dist = max(max(abs(yuvA.x-yuvB.x), abs(yuvA.y-yuvB.y)), abs(yuvA.z-yuvB.z));
+                }
+                break;
+                
+                case YUVw:            
+                {
+                    auto yuvA = RGBtoYUV(a);
+                    auto yuvB = RGBtoYUV(b);
+                    dist = max(max(abs(yuvA.x-yuvB.x)>>2, abs(yuvA.y-yuvB.y)), abs(yuvA.z-yuvB.z));
+                }
+                break;
+
+                case Y:
+                    dist = abs(RGBtoY<T>(a)-RGBtoY<T>(b));
+                break;
             }
-            else
-                dist = max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
             return __powf (dist, Constants::distanceOrder());
         }
 
@@ -384,7 +311,8 @@ namespace Kernels
             }
             __device__ void add(PixelArray<T> pixel)
             {
-                float dist = Pixel::distance(pixel, {float4{0,0,0,0}});
+                PixelArray<T> origin;
+                float dist = Pixel::distance<T>(pixel, origin);
 
                 if(!init)
                 {
@@ -825,8 +753,11 @@ namespace Kernels
         else
             color = FocusLevel::render(coords, focus);
 
-        unsigned char focusColor = (focus/Constants::scanRange())*UCHAR_MAX;
-        Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, threadCoords);
+        if(!Constants::noMap())
+        {
+            unsigned char focusColor = (focus/Constants::scanRange())*UCHAR_MAX;
+            Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, threadCoords);
+        }
         Pixel::store(color, FileNames::RENDER_IMAGE, threadCoords);
     }
 }

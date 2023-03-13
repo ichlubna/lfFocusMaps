@@ -47,8 +47,8 @@ def sine(img, frequency):
             for c in range(channels):
             #for c in range(1):
                 p = yuvImg[i,j,c]
-                yuvImg[i,j,c] = math.sin(frequency*(p/255.0)*math.pi*2)*255
-    img = cv2.addWeighted(yuvImg, 0.05, originalImg, 0.95, 0)
+                yuvImg[i,j,c] = (math.sin(frequency*(p/255.0)*math.pi*2)*0.5+0.5)*255
+    img = cv2.addWeighted(yuvImg, 0.5, originalImg, 0.5, 0)
     return cv2.cvtColor(img, cv2.COLOR_YCrCb2BGR);
 
 def denoise(img):

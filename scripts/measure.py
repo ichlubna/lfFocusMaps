@@ -10,7 +10,7 @@ import traceback
 
 binaryPath = "../build/lfFocusMaps"
 
-def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRange, distanceOrder, scanMetric, scanSpace, yuvDistance, addressMode, useSecondary):
+def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRange, distanceOrder, scanMetric, scanSpace, colorDist, addressMode, useSecondary):
     command = binaryPath
     command += " -i "+inputDir
     command += " -c "+coord
@@ -23,14 +23,14 @@ def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRa
     command += " -r "+str(scanRange)
     command += " -a "+addressMode
     command += " -t 100"
+    command += " -y "+colorDist
     if block:
         command += " -b "
     if fast:
         command += " -f "
-    if yuvDistance:
-        command += " -y "
     if useSecondary:
         command += " -l "
+    command += " -n";
     return command
 
 def run(inputDir, referenceDir, inputRange):
@@ -75,7 +75,7 @@ def run(inputDir, referenceDir, inputRange):
                         for distanceOrder in distanceOrders:
                             for block in [True, False]:
                                 for fast in [True, False]:
-                                    for yuv in [True, False]:
+                                    for colorDist in ["RGB, YUV, Y, YUVw"]:
                                         references = os.listdir(referenceDir)
                                         time = 0
                                         psnr = 0
@@ -83,7 +83,6 @@ def run(inputDir, referenceDir, inputRange):
                                         vmaf = 0
                                         blockMode = "block" if block else "pixel"
                                         fastMode = "fast" if fast else "full"
-                                        distanceSpace = "yuv" if yuv else "rgb"
                                         mode =  "scan_method:"      + scanMethod[0]         + "|" +
                                                 "scan_parameter:"   + str(scanMethod[1])    + "|" +
                                                 "scan_space:"       + str(scanSpace)        + "|" +
@@ -92,11 +91,11 @@ def run(inputDir, referenceDir, inputRange):
                                                 "block_mode:"       + blockMode             + "|" +
                                                 "fast_mode:"        + fastMode              + "|" +
                                                 "distance_order:"   + str(distanceOrder)    + "|" +
-                                                "distance_space:"   + distanceSpace         + "|" +
+                                                "color_distance:"   + colorDist             + "|" +
                                                 "address_mode:"     + addressMode
                                         for reference in references:
                                             coord = os.path.splitext(reference)[0]
-                                            command = makeCmd(inputPath, resultsPath, coord, scanMethod[0], scanMethod[1], block, fast, inputRange,distanceOrder, scanMetric, scapSpace, yuv, addressMode, useSecondary)
+                                            command = makeCmd(inputPath, resultsPath, coord, scanMethod[0], scanMethod[1], block, fast, inputRange,distanceOrder, scanMetric, scapSpace, colorDist, addressMode, useSecondary)
                                             result = bash.run(command)
                                             if(result.returncode != 0):
                                                 print(result.stderr)
@@ -106,7 +105,6 @@ def run(inputDir, referenceDir, inputRange):
                                             end = " ms"
                                             time += float(r[r.find(start) + len(start):r.rfind(end)])
                                             shutil.copyfile(os.path.join(referenceDir, reference), os.path.join(tempReferencePath, reference))
-                                            os.remove(os.path.join(resultsPath, "focusMap.png"))
                                             evaluator = eva.Evaluator()
                                             metrics = evaluator.metrics(tempReferencePath, resultsPath)
                                             psnr += float(metrics.psnr)

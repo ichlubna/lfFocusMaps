@@ -181,7 +181,8 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     intValues[IntConstantIDs::FOCUS_METHOD] = params.method;
     intValues[IntConstantIDs::CLOSEST_VIEWS] = params.closestViews;
     intValues[IntConstantIDs::BLOCK_SAMPLING] = params.blockSampling;
-    intValues[IntConstantIDs::YUV_DISTANCE] = params.YUVDistance;
+    intValues[IntConstantIDs::YUV_DISTANCE] = params.colorDistance;
+    intValues[IntConstantIDs::NO_MAP] = params.noMap;
     intValues[IntConstantIDs::CLOCK_SEED] = std::clock();
     intValues[IntConstantIDs::BLEND_ADDRESS_MODE] = (addressMode == AddressMode::BLEND);
     cudaMemcpyToSymbol(Kernels::Constants::intConstants, intValues.data(), intValues.size() * sizeof(int));
@@ -264,7 +265,7 @@ void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
     cudaMemcpy(weightsGPU, weights.data(), weights.size()*sizeof(float), cudaMemcpyHostToDevice);
 }
 
-glm::vec2 Interpolator::InterpolationParams::parseCoordinates(std::string coordinates)
+glm::vec2 Interpolator::InterpolationParams::parseCoordinates(std::string coordinates) const
 {
     constexpr char delim{'_'};
     std::vector <float> numbers;
@@ -310,7 +311,21 @@ void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
     cudaMemcpy(closestFramesWeightsGPU, closestFramesWeights.data(), closestFramesWeights.size()*sizeof(float), cudaMemcpyHostToDevice);
 }
 
-ScanMetric Interpolator::InterpolationParams::parseMetric(std::string metric)
+ColorDistance Interpolator::InterpolationParams::parseColorDistance(std::string distance) const
+{
+    if(distance == "RGB")
+        return ColorDistance::RGB;
+    else if(distance == "Y")
+        return ColorDistance::Y;
+    else if(distance == "YUV")
+        return ColorDistance::YUV;
+    else if(distance == "YUVw")
+        return ColorDistance::YUVw;
+    std::cerr << "Color metric distance metric set to default." << std::endl;
+    return ColorDistance::RGB;
+}
+
+ScanMetric Interpolator::InterpolationParams::parseMetric(std::string metric) const
 {
     if(metric == "VAR")
         return ScanMetric::VARIANCE;
@@ -324,7 +339,7 @@ ScanMetric Interpolator::InterpolationParams::parseMetric(std::string metric)
     return ScanMetric::VARIANCE;
 }
 
-AddressMode Interpolator::parseAddressMode(std::string addressMode)
+AddressMode Interpolator::parseAddressMode(std::string addressMode) const
 {
     if(addressMode == "WRAP")
         return AddressMode::WRAP;
@@ -340,7 +355,7 @@ AddressMode Interpolator::parseAddressMode(std::string addressMode)
     return AddressMode::CLAMP;
 }
  
-FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method)
+FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method) const
 {
     if(method == "OD")
         return FocusMethod::ONE_DISTANCE;
@@ -380,16 +395,17 @@ void Interpolator::interpolate(InterpolationParams params)
         std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
     }
     std::cout << "Average of " << params.runs << " runs: " << avgTime/params.runs << " ms" << std::endl;
-    storeResults(params.outputPath);
+    storeResults(params.outputPath, params.noMap);
 }
 
-void Interpolator::storeResults(std::string path)
+void Interpolator::storeResults(std::string path, bool noMap)
 {
     std::cout << "Storing results..." << std::endl;
     LoadingBar bar(OUTPUT_SURFACE_COUNT);
     std::vector<uint8_t> data(resolution.x*resolution.y*resolution.z, 255);
 
     for(int i=0; i<OUTPUT_SURFACE_COUNT; i++) 
+    if(!noMap ||  i != FileNames::FOCUS_MAP)
     {
         cudaMemcpy2DFromArray(data.data(), resolution.x*resolution.z, reinterpret_cast<cudaArray*>(surfaceOutputArrays[i]), 0, 0, resolution.x*resolution.z, resolution.y, cudaMemcpyDeviceToHost);
         stbi_write_png((std::filesystem::path(path)/(fileNames[i]+".png")).c_str(), resolution.x, resolution.y, resolution.z, data.data(), resolution.x*resolution.z);

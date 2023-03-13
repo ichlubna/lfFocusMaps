@@ -60,9 +60,15 @@ class Interpolator
             return this;
         }
         
-        InterpolationParams* setYUVDistance(bool yuv=true)
+        InterpolationParams* setNoMap(bool no=true)
         {
-            YUVDistance = yuv;
+            noMap = no;
+            return this;
+        }
+        
+        InterpolationParams* setColorDistance(std::string distance)
+        {
+            colorDistance = parseColorDistance(distance);
             return this;
         }
 
@@ -106,15 +112,17 @@ class Interpolator
         float methodParameter;
         bool closestViews{false};
         bool blockSampling{false};
-        bool YUVDistance{false};
+        bool noMap{false};
+        ColorDistance colorDistance;
         float scanRange;
         int distanceOrder{1};
         int runs{1};
         
         private:
-        glm::vec2 parseCoordinates(std::string coordinates);
-        FocusMethod parseMethod(std::string inputMethod);
-        ScanMetric parseMetric(std::string inputMetric);
+        glm::vec2 parseCoordinates(std::string coordinates) const;
+        FocusMethod parseMethod(std::string inputMethod) const;
+        ScanMetric parseMetric(std::string inputMetric) const;
+        ColorDistance parseColorDistance(std::string distance) const;
     };
 
     Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips);
@@ -154,10 +162,10 @@ class Interpolator
     void loadGPUConstants(InterpolationParams params);
     void loadGPUWeights(glm::vec2 viewCoordinates);
     int* loadImageToArray(const uint8_t *data, glm::ivec3 size);
-    void storeResults(std::string path);
+    void storeResults(std::string path, bool noMap);
     std::vector<float> generateWeights(glm::vec2 coords);
     std::pair<int, int*> createSurfaceObject(glm::ivec3 size, const uint8_t *data=nullptr);
     int createTextureObject(const uint8_t *data, glm::ivec3 size);
     void prepareClosestFrames(glm::vec2 viewCoordinates);
-    AddressMode parseAddressMode(std::string addressMode);
+    AddressMode parseAddressMode(std::string addressMode) const;
 };
