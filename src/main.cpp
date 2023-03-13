@@ -52,7 +52,8 @@ int main(int argc, char **argv)
     try
     {
         bool useMips = static_cast<std::string>(args["-m"]) == "PYR";
-        Interpolator interpolator(static_cast<std::string>(args["-i"]), static_cast<std::string>(args["-a"]), static_cast<bool>(args["-l"]), useMips);
+        bool yuv = static_cast<std::string>(args["-y"])[0] == 'Y';
+        Interpolator interpolator(static_cast<std::string>(args["-i"]), static_cast<std::string>(args["-a"]), static_cast<bool>(args["-l"]), useMips, yuv);
         Interpolator::InterpolationParams params;
         params
         .setMethod(static_cast<std::string>(args["-m"]))

@@ -125,7 +125,7 @@ class Interpolator
         ColorDistance parseColorDistance(std::string distance) const;
     };
 
-    Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips);
+    Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv);
     ~Interpolator();
     void interpolate(InterpolationParams params);
 
@@ -140,6 +140,7 @@ class Interpolator
     AddressMode addressMode{CLAMP};
     bool useSecondaryFolder{false};
     bool useMips{false};
+    bool useYUV{false};
     std::vector<int*> surfaceInputArrays;
     std::vector<int*> surfaceOutputArrays;
     void *surfaceObjectsArr;

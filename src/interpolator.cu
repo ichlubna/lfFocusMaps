@@ -31,7 +31,7 @@ class Timer
     cudaEvent_t startEvent, stopEvent;
 };
 
-Interpolator::Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips) : useSecondaryFolder{useSecondary}, useMips{mips}, input{inputPath}
+Interpolator::Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv) : useSecondaryFolder{useSecondary}, useMips{mips}, useYUV{yuv}, input{inputPath}
 {
     addressMode = parseAddressMode(mode);
     init();
@@ -74,7 +74,12 @@ int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
     cudaArray *arr;
     cudaMallocArray(&arr, &channels, size.x, size.y);
     cudaMemcpy2DToArray(arr, 0, 0, data, size.x*size.z, size.x*size.z, size.y, cudaMemcpyHostToDevice);
-    
+   
+    if(useYUV)
+    {
+       // kernel na konverze
+    }
+ 
     cudaResourceDesc texRes;
     memset(&texRes, 0, sizeof(cudaResourceDesc));
     texRes.resType = cudaResourceTypeArray;

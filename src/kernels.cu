@@ -67,68 +67,66 @@ namespace Kernels
     __constant__ float2 offsets[MAX_IMAGES];
     //extern __shared__ half localMemory[];
 
-     template <typename T>
         class PixelArray
         {
             public:
             __device__ PixelArray(){};
-            __device__ PixelArray(uchar4 pixel) : channels{T(pixel.x), T(pixel.y), T(pixel.z), T(pixel.w)}{};
-            __device__ PixelArray(float4 pixel) : channels{T(pixel.x), T(pixel.y), T(pixel.z), T(pixel.w)}{};
-            T channels[CHANNEL_COUNT]{0,0,0,0};
-            __device__ T& operator[](int index){return channels[index];}
+            __device__ PixelArray(float4 pixel) : channels{pixel.x, pixel.y, pixel.z, pixel.w}{};
+            float channels[CHANNEL_COUNT]{0,0,0,0};
+            __device__ float& operator[](int index){return channels[index];}
           
-             __device__ uchar4 uch4() 
+            __device__ uchar4 uch4() 
             {
                 uchar4 result;
                 auto data = reinterpret_cast<unsigned char*>(&result);
                 for(int i=0; i<CHANNEL_COUNT; i++)
-                    data[i] = __float2int_rn(channels[i]);
+                    data[i] = __float2int_rn(channels[i]*UCHAR_MAX);
                 return result;
             }
            
-            __device__ void addWeighted(T weight, PixelArray<T> &value) 
+            __device__ void addWeighted(float weight, PixelArray &value) 
             {    
                 for(int j=0; j<CHANNEL_COUNT; j++)
                     //channels[j] += value[j]*weight;
                     channels[j] = __fmaf_rn(value[j], weight, channels[j]);
             }
             
-            __device__ PixelArray<T> operator/= (const T &value)
+            __device__ PixelArray operator/= (const float &value)
             {
                 for(int j=0; j<CHANNEL_COUNT; j++)
                     this->channels[j] /= value;
                 return *this;
             }
             
-            __device__ PixelArray<T> operator+= (const PixelArray<T> &value)
+            __device__ PixelArray operator+= (const PixelArray &value)
             {
                 for(int j=0; j<CHANNEL_COUNT; j++)
                     this->channels[j] += value.channels[j];
                 return *this;
             }
              
-            __device__ PixelArray<T> operator+ (const PixelArray &value)
+            __device__ PixelArray operator+ (const PixelArray &value)
             {
                 for(int j=0; j<CHANNEL_COUNT; j++)
                     this->channels[j] += value.channels[j];
                 return *this;
             }
             
-            __device__ PixelArray<T> operator-(const PixelArray &value)
+            __device__ PixelArray operator-(const PixelArray &value)
             {
                 for(int j=0; j<CHANNEL_COUNT; j++)
                     this->channels[j] -= value.channels[j];
                 return *this;
             }
             
-            __device__ PixelArray<T> operator/(const T &value)
+            __device__ PixelArray operator/(const float &value)
             {
                 for(int j=0; j<CHANNEL_COUNT; j++)
                     this->channels[j] /= value;
                 return *this;
             }
             
-            __device__ PixelArray<T> operator*(const T &value)
+            __device__ PixelArray operator*(const float &value)
             {
                 for(int j=0; j<CHANNEL_COUNT; j++)
                     this->channels[j] *= value;
@@ -152,54 +150,26 @@ namespace Kernels
    
     namespace Pixel
     {
-        //source: https://learn.microsoft.com/en-us/windows/win32/medfound/recommended-8-bit-yuv-formats-for-video-rendering
-        template <typename T>        
-        __device__ uchar4 RGBtoYUV(PixelArray<T> &rgb)
-        {
-            uchar4 yuv;
-            yuv.x = ( __float2uint_rn(  66 * rgb[0] + 129 * rgb[1] +  25 * rgb[2] + 128) >> 8) +  16;
-            yuv.y = ( __float2uint_rn( -38 * rgb[0] -  74 * rgb[1] + 112 * rgb[2] + 128) >> 8) + 128;
-            yuv.z = ( __float2uint_rn( 112 * rgb[0] -  94 * rgb[1] -  18 * rgb[2] + 128) >> 8) + 128;
-            return yuv;
-        }
-        
-        template <typename T>        
-        __device__ unsigned char RGBtoY(PixelArray<T> &rgb)
-        {
-            return (__float2uint_rn(  66 * rgb[0] + 129 * rgb[1] +  25 * rgb[2] + 128) >> 8) +  16;
-        }
-
-
-        template <typename T>
-        __device__ float distance(PixelArray<T> &a, PixelArray<T> &b)
+        __device__ float distance(PixelArray &a, PixelArray &b)
         {
             float dist{0};
             switch(Constants::YUVDistance())
             {
                 case RGB:
-                {
-                    dist = max(max(abs(a[0]-b[0]), abs(a[1]-b[1])), abs(a[2]-b[2]));
-                }
-                break;
-                
                 case YUV:            
                 {
-                    auto yuvA = RGBtoYUV<T>(a);
-                    auto yuvB = RGBtoYUV<T>(b);
-                    dist = max(max(abs(yuvA.x-yuvB.x), abs(yuvA.y-yuvB.y)), abs(yuvA.z-yuvB.z));
+                    dist = fmaxf(fmaxf(fabsf(a[0]-b[0]), fabsf(a[1]-b[1])), fabsf(a[2]-b[2]));
                 }
                 break;
-                
+                 
                 case YUVw:            
                 {
-                    auto yuvA = RGBtoYUV(a);
-                    auto yuvB = RGBtoYUV(b);
-                    dist = max(max(abs(yuvA.x-yuvB.x)>>2, abs(yuvA.y-yuvB.y)), abs(yuvA.z-yuvB.z));
+                    dist = fmaxf(fmaxf(fabsf(a[0]-b[0])*0.25, fabsf(a[1]-b[1])), fabsf(a[2]-b[2]));
                 }
                 break;
 
                 case Y:
-                    dist = abs(RGBtoY<T>(a)-RGBtoY<T>(b));
+                    dist = fabsf(a[0]-b[0]);
                 break;
             }
             return __powf (dist, Constants::distanceOrder());
@@ -210,8 +180,7 @@ namespace Kernels
             surf2Dwrite<uchar4>(px, Constants::surfaces()[imageID], coords.x*sizeof(uchar4), coords.y);
         }
 
-        template <typename T>
-        __device__ PixelArray<T> load(int imageID, float2 coords)
+        __device__ PixelArray load(int imageID, float2 coords)
         {
             int id = Constants::textures()[imageID];
             if(Constants::blendAddressMode())
@@ -222,34 +191,33 @@ namespace Kernels
                     offset += floor(coords.x)*SPREAD;
                 if(coords.y > 1.0 || coords.y < 0.0)
                     offset += floor(coords.y)*SPREAD;
-                PixelArray<T> pixel;
+                PixelArray pixel;
                 const float2 offsets[4] = {{offset, offset}, {offset, -offset}, {-offset, -offset}, {-offset, offset}};
                 for(int i=0; i<4; i++)
-                    pixel += PixelArray<T>{tex2D<float4>(id, coords.x+offsets[i].x, coords.y+offsets[i].y)}; 
-                return (pixel/4)*UCHAR_MAX;
+                    pixel += tex2D<float4>(id, coords.x+offsets[i].x, coords.y+offsets[i].y); 
+                return pixel/4;
             }    
             else
-                return PixelArray<T>{tex2D<float4>(id, coords.x, coords.y)}*UCHAR_MAX;
+                return tex2D<float4>(id, coords.x, coords.y);
         } 
     }
 
     namespace ScanMetrics
     {
-        template <typename T>
         class OnlineVariance
         {
             private:
             float n{0};
-            PixelArray<T> m;
+            PixelArray m;
             float m2{0};
             
             public:
-            __device__ void add(PixelArray<T> val)
+            __device__ void add(PixelArray val)
             {
-               float distance = Pixel::distance<T>(m, val);
+               float distance = Pixel::distance(m, val);
                n++;
-               PixelArray<T> delta = val-m;
-               m += delta/static_cast<T>(n);
+               PixelArray delta = val-m;
+               m += delta/static_cast<float>(n);
                //m2 += distance * Pixel::distance(m, val);
                m2 = __fmaf_rn(distance, Pixel::distance(m, val), m2);
 
@@ -258,42 +226,40 @@ namespace Kernels
             {
                 return m2/(n-1);    
             }      
-            __device__ OnlineVariance& operator+=(const PixelArray<T>& rhs){
+            __device__ OnlineVariance& operator+=(const PixelArray& rhs){
 
               add(rhs);
               return *this;
             }
         };
         
-        template <typename T>
         class Range
         {
             private:
-            PixelArray<T> minCol{float4{FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX}};
-            PixelArray<T> maxCol{float4{FLT_MIN, FLT_MIN, FLT_MIN, FLT_MIN}};
+            PixelArray minCol{float4{FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX}};
+            PixelArray maxCol{float4{FLT_MIN, FLT_MIN, FLT_MIN, FLT_MIN}};
             
             public:
-            __device__ void add(PixelArray<T> val)
+            __device__ void add(PixelArray val)
             {
-                minCol[0] = min(minCol[0],val[0]);
-                minCol[1] = min(minCol[1],val[1]);
-                minCol[2] = min(minCol[2],val[2]);
-                maxCol[0] = max(maxCol[0],val[0]);
-                maxCol[1] = max(maxCol[1],val[1]);
-                maxCol[2] = max(maxCol[2],val[2]);
+                minCol[0] = fminf(minCol[0],val[0]);
+                minCol[1] = fminf(minCol[1],val[1]);
+                minCol[2] = fminf(minCol[2],val[2]);
+                maxCol[0] = fmaxf(maxCol[0],val[0]);
+                maxCol[1] = fmaxf(maxCol[1],val[1]);
+                maxCol[2] = fmaxf(maxCol[2],val[2]);
             }
             __device__ float dispersionAmount()
             {
                 return Pixel::distance(minCol, maxCol);  
             }      
-            __device__ Range& operator+=(const PixelArray<T>& rhs){
+            __device__ Range& operator+=(const PixelArray& rhs){
 
               add(rhs);
               return *this;
             }
         };
        
-        template <typename T>
         class Percentile
         {
             private:
@@ -309,15 +275,15 @@ namespace Kernels
                 stepUp = 1.0f-percentile;
                 stepDown = percentile;
             }
-            __device__ void add(PixelArray<T> pixel)
+            __device__ void add(PixelArray pixel)
             {
-                PixelArray<T> origin;
-                float dist = Pixel::distance<T>(pixel, origin);
+                PixelArray origin;
+                float dist = Pixel::distance(pixel, origin);
 
                 if(!init)
                 {
                     value = dist;
-                    step = max(dist, 1.0f);
+                    step = fmaxf(dist, 1.0f);
                     init = true;
                     return;
                 }
@@ -325,7 +291,7 @@ namespace Kernels
                     value -= step*stepUp;
                 else if(value < dist)
                     value += step*stepDown;
-                if(abs(value-dist) < step)
+                if(fabsf(value-dist) < step)
                    step /= 2.0f; 
             }
             __device__ float result()
@@ -334,15 +300,14 @@ namespace Kernels
             }
         };
  
-        template <typename T>
         class IQR
         {
             private:
-            Percentile<T> first{0.25};            
-            Percentile<T> second{0.75};            
+            Percentile first{0.25};            
+            Percentile second{0.75};            
  
             public:
-            __device__ void add(PixelArray<T> val)
+            __device__ void add(PixelArray val)
             {
                 first.add(val); 
                 second.add(val); 
@@ -351,25 +316,24 @@ namespace Kernels
             {
                 return second.result()-first.result();
             }      
-            __device__ IQR& operator+=(const PixelArray<T>& rhs){
+            __device__ IQR& operator+=(const PixelArray& rhs){
 
               add(rhs);
               return *this;
             }
         };
       
-        template <typename T>
         class Mad
         {
             private:
-            PixelArray<T> last;
-            PixelArray<T> sample;
+            PixelArray last;
+            PixelArray sample;
             float dist{0};
             int n{0};
             static constexpr int SAMPLE_CYCLE{5};
              
             public:
-            __device__ void add(PixelArray<T> val)
+            __device__ void add(PixelArray val)
             { 
                 if(n%SAMPLE_CYCLE == 0)
                     sample = val;
@@ -385,7 +349,7 @@ namespace Kernels
             {
                 return dist;
             }      
-            __device__ Mad& operator+=(const PixelArray<T>& rhs){
+            __device__ Mad& operator+=(const PixelArray& rhs){
 
               add(rhs);
               return *this;
@@ -393,8 +357,7 @@ namespace Kernels
         };
     }
 
-    template<typename T>
-    __device__ float2 focusCoords(int gridID, T pxCoords, float focus)
+    __device__ float2 focusCoords(int gridID, float2 pxCoords, float focus)
     {
         float2 offset = offsets[gridID];
         float2 coords{pxCoords.x-offset.x*focus, pxCoords.y-offset.y*focus};
@@ -421,7 +384,7 @@ namespace Kernels
             for(int blockPx=0; blockPx<blockSize; blockPx++)
             {
                 float2 inBlockCoords{coords.x+BLOCK_OFFSETS[blockPx].x, coords.y+BLOCK_OFFSETS[blockPx].y};
-                auto px{Pixel::load<float>(gridID, focusCoords(gridID, inBlockCoords, transformedFocus))};
+                auto px{Pixel::load(gridID, focusCoords(gridID, inBlockCoords, transformedFocus))};
                 dispersions[blockPx] += px;
             }
         }
@@ -475,7 +438,7 @@ namespace Kernels
         template<int blockSize, bool closest=false>
         __device__ float dispersion(ScanMetric t, float2 coords, float focus)
         {
-            return call<blockSize, closest, ScanMetrics::OnlineVariance<float>, ScanMetrics::Range<float>, ScanMetrics::IQR<float>, ScanMetrics::Mad<float>>(0,t, coords, focus);
+            return call<blockSize, closest, ScanMetrics::OnlineVariance, ScanMetrics::Range, ScanMetrics::IQR, ScanMetrics::Mad>(0,t, coords, focus);
         }
 
         __device__ float evaluate(float2 coords, float focus)
@@ -500,7 +463,7 @@ namespace Kernels
         __device__ uchar4 render(float2 coords, float focus)
         {
             auto cr = Constants::colsRows();
-            PixelArray<float> sum;
+            PixelArray sum;
             int gridID = 0; 
             
             if constexpr (closest)
@@ -510,7 +473,7 @@ namespace Kernels
                 for(int i=0; i<CLOSEST_COUNT; i++) 
                 {
                     gridID = closestCoords[i];
-                    auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus))};
+                    auto px{Pixel::load(gridID, focusCoords(gridID, coords, focus))};
                     sum.addWeighted(weights[i], px);
                 }
             }
@@ -522,7 +485,7 @@ namespace Kernels
                     gridID = row*cr.x;
                     for(int col=0; col<cr.x; col++) 
                     {
-                        auto px{Pixel::load<float>(gridID, focusCoords(gridID, coords, focus))};
+                        auto px{Pixel::load(gridID, focusCoords(gridID, coords, focus))};
                         sum.addWeighted(weights[gridID], px);
                         gridID++;
                     }
@@ -669,7 +632,7 @@ namespace Kernels
                         optimum[p].addForce(focusPair.x, dispersionPair.x);
                     else
                         optimum[p].addForce(focusPair.y, dispersionPair.y);
-                    step = LEARN_RATE*abs(focus-optimum[p].optimalFocus);
+                    step = LEARN_RATE*fabsf(focus-optimum[p].optimalFocus);
                     focus = optimum[p].optimalFocus;
                     if(step < MIN_STEP)
                         break;
