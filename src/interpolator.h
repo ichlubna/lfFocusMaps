@@ -136,6 +136,16 @@ class Interpolator
         glm::ivec2 colsRows;
         glm::ivec3 resolution;
     };
+    enum KernelType{PROCESS, ARR_RGB_YUV, ARR_YUV_RGB};
+    class KernelParams
+    {
+        public:
+        void *data;
+        int width;
+        int height;
+    };
+    void runKernel(KernelType, KernelParams={});
+
     static constexpr int OUTPUT_SURFACE_COUNT{2};
     AddressMode addressMode{CLAMP};
     bool useSecondaryFolder{false};

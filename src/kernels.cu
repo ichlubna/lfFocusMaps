@@ -134,9 +134,8 @@ namespace Kernels
             }
         };
 
-    __device__ bool coordsOutside(int2 coords)
+    __device__ bool coordsOutside(int2 coords, int2 resolution)
     {
-        int2 resolution = Constants::imgRes();
         return (coords.x >= resolution.x || coords.y >= resolution.y);
     }
 
@@ -187,9 +186,9 @@ namespace Kernels
             {
                 constexpr float SPREAD{0.0015f};
                 float offset{0};
-                if(coords.x > 1.0 || coords.x < 0.0)
+                if(coords.x > 1.0f || coords.x < 0.0f)
                     offset += floor(coords.x)*SPREAD;
-                if(coords.y > 1.0 || coords.y < 0.0)
+                if(coords.y > 1.0f || coords.y < 0.0f)
                     offset += floor(coords.y)*SPREAD;
                 PixelArray pixel;
                 const float2 offsets[4] = {{offset, offset}, {offset, -offset}, {-offset, -offset}, {-offset, offset}};
@@ -292,7 +291,7 @@ namespace Kernels
                 else if(value < dist)
                     value += step*stepDown;
                 if(fabsf(value-dist) < step)
-                   step /= 2.0f; 
+                   step *= 0.5f; 
             }
             __device__ float result()
             {
@@ -303,7 +302,7 @@ namespace Kernels
         class IQR
         {
             private:
-            Percentile first{0.25};            
+            Percentile first{0.25f};            
             Percentile second{0.75};            
  
             public:
@@ -380,7 +379,7 @@ namespace Kernels
         __device__ void evaluateBlock(int gridID, float focus, float2 coords, T *dispersions)
         {
             float transformedFocus = transformFocus(focus, Constants::scanRange(), Constants::scanSpace());
-            const float2 BLOCK_OFFSETS[]{ {0,0}, {-1,0.5}, {0.5, 1}, {1,-0.5}, {-0.5,-1} };
+            const float2 BLOCK_OFFSETS[]{ {0.0f,0.0f}, {-1.0f,0.5f}, {0.5f, 1.0f}, {1.0f,-0.5f}, {-0.5f,-1.0f} };
             for(int blockPx=0; blockPx<blockSize; blockPx++)
             {
                 float2 inBlockCoords{coords.x+BLOCK_OFFSETS[blockPx].x, coords.y+BLOCK_OFFSETS[blockPx].y};
@@ -659,7 +658,7 @@ namespace Kernels
     __global__ void process()
     {
         int2 threadCoords = getImgCoords(); 
-        if(coordsOutside(threadCoords))
+        if(coordsOutside(threadCoords, Constants::imgRes()))
             return;
         float2 coords = {static_cast<float>(threadCoords.x)/Constants::imgRes().x,
                         static_cast<float>(threadCoords.y)/Constants::imgRes().y};
@@ -722,5 +721,46 @@ namespace Kernels
             Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, threadCoords);
         }
         Pixel::store(color, FileNames::RENDER_IMAGE, threadCoords);
+    }
+
+    namespace Conversion
+    {
+        //source: https://learn.microsoft.com/en-us/windows/win32/medfound/recommended-8-bit-yuv-formats-for-video-rendering
+        __global__ void RGBtoYUV(void *data, int width, int height)
+        { 
+            auto image = reinterpret_cast<uchar4*>(data);
+            int2 coords = getImgCoords(); 
+            if(coordsOutside(coords, {width, height}))
+                return;
+
+            int id = coords.y*width+coords.x;
+            uchar4 pixel = image[id];
+            uchar4 yuv{0};
+            yuv.x = __float2int_rn( 0.256788f * pixel.x + 0.504129f * pixel.y + 0.097906f * pixel.z) +  16;
+            yuv.y = __float2int_rn(-0.148223f * pixel.x - 0.290993f * pixel.y + 0.439216f * pixel.z) + 128;
+            yuv.z = __float2int_rn( 0.439216f * pixel.x - 0.367788f * pixel.y - 0.071427f * pixel.z) + 128;
+            yuv.w = pixel.w;
+            image[id] = yuv;
+        }
+        
+        __global__ void YUVtoRGB(void *data, int width, int height)
+        { 
+            auto image = reinterpret_cast<uchar4*>(data);
+            int2 coords = getImgCoords(); 
+            if(coordsOutside(coords, {width, height}))
+                return;
+
+            int id = coords.y*width+coords.x;
+            uchar4 pixel = image[id];
+            uchar4 rgb{0};
+            int C = static_cast<int>(pixel.x) - 16;
+            int D = static_cast<int>(pixel.y) - 128;
+            int E = static_cast<int>(pixel.z) - 128;
+            rgb.x = __float2int_rn( 1.164383f * C + 1.596027f * E );
+            rgb.y = __float2int_rn( 1.164383f * C - (0.391762f * D) - (0.812968f * E ));
+            rgb.z = __float2int_rn( 1.164383f * C +  2.017232f * D );
+            rgb.w = pixel.w;
+            image[id] = rgb;
+        }
     }
 }

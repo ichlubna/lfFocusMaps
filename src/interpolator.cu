@@ -70,15 +70,19 @@ int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
     break;
     }
 
+    size_t pitch = size.x*size.z;
+    void *imageData;
+    cudaMalloc(&imageData, size.x*size.y*size.z);
+    cudaMemcpy2D(imageData, pitch, data, pitch, pitch, size.y, cudaMemcpyHostToDevice);
+
+    if(useYUV)
+        runKernel(ARR_RGB_YUV, {imageData, size.x, size.y});
+
     cudaChannelFormatDesc channels = cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
     cudaArray *arr;
     cudaMallocArray(&arr, &channels, size.x, size.y);
-    cudaMemcpy2DToArray(arr, 0, 0, data, size.x*size.z, size.x*size.z, size.y, cudaMemcpyHostToDevice);
-   
-    if(useYUV)
-    {
-       // kernel na konverze
-    }
+    cudaMemcpy2DToArray(arr, 0, 0, imageData, pitch, pitch, size.y, cudaMemcpyDeviceToDevice);   
+    cudaFree(imageData);
  
     cudaResourceDesc texRes;
     memset(&texRes, 0, sizeof(cudaResourceDesc));
@@ -378,6 +382,33 @@ FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method) c
     return FocusMethod::BRUTE_FORCE;
 } 
 
+void Interpolator::runKernel(KernelType type, KernelParams params)
+{
+    dim3 dimBlock(16, 16, 1);
+
+    switch(type)
+    {
+        case PROCESS:
+        {
+            dim3 dimGrid(glm::ceil(static_cast<float>(resolution.x)/dimBlock.x), glm::ceil(static_cast<float>(resolution.y)/dimBlock.y), 1);
+            Kernels::process<<<dimGrid, dimBlock, sharedSize>>>();
+        }
+        break;
+
+        case ARR_RGB_YUV:
+        {
+            dim3 dimGrid(glm::ceil(static_cast<float>(params.width)/dimBlock.x), glm::ceil(static_cast<float>(params.height)/dimBlock.y), 1);
+            Kernels::Conversion::RGBtoYUV<<<dimGrid, dimBlock, sharedSize>>>(params.data, params.width, params.height);
+        }
+        break;
+
+        case ARR_YUV_RGB:
+            dim3 dimGrid(glm::ceil(static_cast<float>(params.width)/dimBlock.x), glm::ceil(static_cast<float>(params.height)/dimBlock.y), 1);
+            Kernels::Conversion::YUVtoRGB<<<dimGrid, dimBlock, sharedSize>>>(params.data, params.width, params.height);
+        break;
+    }
+}
+
 void Interpolator::interpolate(InterpolationParams params)
 {
     glm::vec2 coords = glm::vec2(colsRows-1)*params.coordinates;
@@ -386,15 +417,13 @@ void Interpolator::interpolate(InterpolationParams params)
     loadGPUOffsets(coords);   
     loadGPUConstants(params);
     
-    dim3 dimBlock(16, 16, 1);
-    dim3 dimGrid(glm::ceil(static_cast<float>(resolution.x)/dimBlock.x), glm::ceil(static_cast<float>(resolution.y)/dimBlock.y), 1);
 
     std::cout << "Elapsed time: "<<std::endl;
     float avgTime{0};
     for(int i=0; i<params.runs; i++)
     {
         Timer timer;
-        Kernels::process<<<dimGrid, dimBlock, sharedSize>>>();
+        runKernel(PROCESS);
         auto time = timer.stop();
         avgTime += time;
         std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
@@ -409,11 +438,20 @@ void Interpolator::storeResults(std::string path, bool noMap)
     LoadingBar bar(OUTPUT_SURFACE_COUNT);
     std::vector<uint8_t> data(resolution.x*resolution.y*resolution.z, 255);
 
+    size_t pitch = resolution.x*resolution.z;
+    void *imageData;
+    cudaMalloc(&imageData, resolution.x*resolution.y*resolution.z);
+
     for(int i=0; i<OUTPUT_SURFACE_COUNT; i++) 
-    if(!noMap ||  i != FileNames::FOCUS_MAP)
-    {
-        cudaMemcpy2DFromArray(data.data(), resolution.x*resolution.z, reinterpret_cast<cudaArray*>(surfaceOutputArrays[i]), 0, 0, resolution.x*resolution.z, resolution.y, cudaMemcpyDeviceToHost);
-        stbi_write_png((std::filesystem::path(path)/(fileNames[i]+".png")).c_str(), resolution.x, resolution.y, resolution.z, data.data(), resolution.x*resolution.z);
-        bar.add();
-    }
+        if(!noMap ||  i != FileNames::FOCUS_MAP)
+        {
+            cudaMemcpy2DFromArray(imageData, pitch, reinterpret_cast<cudaArray*>(surfaceOutputArrays[i]), 0, 0, pitch, resolution.y, cudaMemcpyDeviceToDevice);
+            if(i != FileNames::FOCUS_MAP && useYUV)
+                runKernel(ARR_YUV_RGB, {imageData, resolution.x, resolution.y});
+
+            cudaMemcpy2D(data.data(), pitch, imageData, pitch, pitch, resolution.y, cudaMemcpyDeviceToHost);
+            stbi_write_png((std::filesystem::path(path)/(fileNames[i]+".png")).c_str(), resolution.x, resolution.y, resolution.z, data.data(), resolution.x*resolution.z);
+            bar.add();
+        }
+    cudaFree(imageData);
 }
