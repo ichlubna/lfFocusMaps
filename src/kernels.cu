@@ -56,6 +56,8 @@ namespace Kernels
         __device__ float scanSpace(){return floatConstants[FloatConstantIDs::SPACE];}
         __device__ float descentStartStep(){return floatConstants[FloatConstantIDs::DESCENT_START_STEP];}
         __device__ float scanRange(){return floatConstants[FloatConstantIDs::SCAN_RANGE];}
+        __device__ float pyramidBroadStep(){return floatConstants[FloatConstantIDs::PYRAMID_BROAD_STEP];}
+        __device__ float pyramidNarrowStep(){return floatConstants[FloatConstantIDs::PYRAMID_NARROW_STEP];}
         __device__ float focusMethodParameter(){return floatConstants[FloatConstantIDs::FOCUS_METHOD_PARAMETER];}
 
         __constant__ float descentStartPoints[DESCENT_START_POINTS];
@@ -652,6 +654,28 @@ namespace Kernels
                 unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
                 curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
             }
+
+            float broadStep = Constants::pyramidBroadStep();
+            Constants::setMipTextures();
+            Optimum optimumBroad;
+            float focus{0};
+            for(int i=0; i<PYRAMID_DIVISIONS_BROAD; i++)
+            {
+                optimumBroad.add(focus, FocusLevel::evaluate(coords, focus));
+                focus += broadStep;
+            }
+
+            float narrowStep = Constants::pyramidNarrowStep();
+            Constants::setSecondaryTextures();
+            Optimum optimumNarrow;
+            focus = optimumBroad.optimalFocus-broadStep*0.5f;
+            for(int i=0; i<PYRAMID_DIVISIONS_NARROW; i++)
+            {
+                optimumNarrow.add(focus, FocusLevel::evaluate(coords, focus));
+                focus += narrowStep;
+            }
+
+            return optimumNarrow.optimalFocus;
         }
     }
 

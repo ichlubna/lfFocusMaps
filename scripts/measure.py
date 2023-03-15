@@ -36,10 +36,11 @@ def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRa
 def run(inputDir, referenceDir, inputRange):
     scanMethods = [ ("BF", 16), ("BF", 32), ("BF", 64), ("BF", 128), ("BF", 256)
                     ("RAND", 16), ("RAND", 32), ("RAND", 64)
-                    ("HIER", 0), ("HIER", 1), ("DESC", 0), ("DESC", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1) ]
+                    ("HIER", 0), ("HIER", 1), ("DESC", 0), ("DESC", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1) ]
     scanMetric = [ "VAR", "RANGE", "IQR", "MAD" ]
     addressModes = [ "WRAP", "CLAMP", "MIRROR", "BORDER", "BLEND" ]
     preprocesses = [ "NONE", "CONTRAST", "EDGE", "SHARPEN", "EQUAL", "SINE_FAST", "SINE_SLOW", "DENOISE", "MEDIAN", "BILATERAL"]
+    pyramidPreprocess = [ "RESIZE_QUARTER", "RESIZE_EIGHTH", "GAUSSIAN_ULTRA_HEAVY", "GAUSSIAN_HEAVY", "GAUSSIAN_LIGHT"]
     distanceOrders = [ 1,2,3,4 ]
 
     workspace = tempfile.mkdtemp()
@@ -63,12 +64,12 @@ def run(inputDir, referenceDir, inputRange):
             prepr.preprocess(inputDir, secondaryPath, preprocess)
             useSecondary = True
         for scanMethod in scanMethods:
-            if scanMethod == "PYR":
-                if pyramidID < 2:
-                    prepr.preprocess(inputDir, downPath, "RESIZE_HALF")
-                else:
-                    prepr.preprocess(inputDir, downPath, "RESIZE_QUARTER")
-                pyramidID +=1
+            pyramidMode = ""
+            if str(scanMethod[0]) == "PYR":
+                pyramidMode = pyramidPreprocess[pyramidID]
+                prepr.preprocess(inputDir, downPath, pyramidMode)
+                if scanMethod[1] == 1:
+                    pyramidID +=1
             for addressMode in addressModes:
                 for scanSpace in np.linspace(0.5,3,30)
                     for scanMetric in scanMetrics:
@@ -83,7 +84,9 @@ def run(inputDir, referenceDir, inputRange):
                                         vmaf = 0
                                         blockMode = "block" if block else "pixel"
                                         fastMode = "fast" if fast else "full"
-                                        mode =  "scan_method:"      + scanMethod[0]         + "|" +
+                                        if pyramidMode != "":
+                                            pyramidMode = "_"+pyramidMode
+                                        mode =  "scan_method:"      + scanMethod[0]+pyramidMode  + "|" +
                                                 "scan_parameter:"   + str(scanMethod[1])    + "|" +
                                                 "scan_space:"       + str(scanSpace)        + "|" +
                                                 "scan_metric:"      + scanMetric            + "|" +

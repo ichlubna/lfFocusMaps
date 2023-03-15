@@ -5,7 +5,7 @@ import math
 import cv2
 
 def resize(img, amount):
-    return cv2.resize(img, (int(img.shape[1]*amount), int(img.shape[0]*amount)), interpolation=cv2.INTER_LANCZOS4)
+    return cv2.resize(img, (int(img.shape[1]*amount), int(img.shape[0]*amount)), interpolation=cv2.INTER_AREA)
 
 def contrast(img, amount):
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
@@ -60,6 +60,9 @@ def median(img):
 def bilateral(img):
     return cv2.bilateralFilter(img, 16, 8, 16)
 
+def gaussian(img,amount):
+    return cv2.GaussianBlur(img,(amount, amount),0)
+
 def preprocess(inputDir, outputDir, method):
     files = sorted(os.listdir(inputDir))
     for file in files:
@@ -67,10 +70,16 @@ def preprocess(inputDir, outputDir, method):
         outputFile = os.path.join(outputDir, file)
         img = cv2.imread(inputFile)
         global result
-        if method == "RESIZE_HALF":
-            result = resize(img, 0.5)
+        if method == "RESIZE_EIGHTH":
+            result = resize(img, 0.125);
         elif method == "RESIZE_QUARTER":
             result = resize(img, 0.25)
+        elif method == "GAUSSIAN_LIGHT":
+            result = gaussian(img, 9)
+        elif method == "GAUSSIAN_HEAVY":
+            result = gaussian(img, 19)
+        elif method == "GAUSSIAN_ULTRA_HEAVY":
+            result = gaussian(img, 41)
         elif method == "CONTRAST":
             result = contrast(img, 2)
         elif method == "EDGE":

@@ -39,6 +39,8 @@ int main(int argc, char **argv)
                           "-t - number of kernel runs for performance measurement - default is 1\n"
                           "-a - address mode - what to sample outside the images: WRAP, CLAMP, MIRROR, BORDER, BLEND - default is CLAMP\n"
                           "-n - will not store focus map\n"
+                          "-g - use this if the input dataset was captured with the same spacing in horizontal and vertical axis\n"
+                          "     if this option is not used, the lf grid spacing is expected to be in the same ratio as resolution\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;
@@ -53,7 +55,7 @@ int main(int argc, char **argv)
     {
         bool useMips = static_cast<std::string>(args["-m"]) == "PYR";
         bool yuv = static_cast<std::string>(args["-y"])[0] == 'Y';
-        Interpolator interpolator(static_cast<std::string>(args["-i"]), static_cast<std::string>(args["-a"]), static_cast<bool>(args["-l"]), useMips, yuv);
+        Interpolator interpolator(static_cast<std::string>(args["-i"]), static_cast<std::string>(args["-a"]), static_cast<bool>(args["-l"]), useMips, yuv, args["-g"]);
         Interpolator::InterpolationParams params;
         params
         .setMethod(static_cast<std::string>(args["-m"]))

@@ -31,7 +31,7 @@ class Timer
     cudaEvent_t startEvent, stopEvent;
 };
 
-Interpolator::Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv) : useSecondaryFolder{useSecondary}, useMips{mips}, useYUV{yuv}, input{inputPath}
+Interpolator::Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv, bool aspect) : useSecondaryFolder{useSecondary}, useMips{mips}, useYUV{yuv}, useAspect{aspect}, input{inputPath}
 {
     addressMode = parseAddressMode(mode);
     init();
@@ -201,6 +201,10 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     float range = (params.scanRange > 0) ? params.scanRange : 0.5f; 
     floatValues[FloatConstantIDs::DESCENT_START_STEP] = (static_cast<float>(range)/DESCENT_START_POINTS)/4.0f;
     floatValues[FloatConstantIDs::SCAN_RANGE] = range;
+    float pyramidBroadStep = range/PYRAMID_DIVISIONS_BROAD;
+    floatValues[FloatConstantIDs::PYRAMID_BROAD_STEP] = pyramidBroadStep; 
+    floatValues[FloatConstantIDs::PYRAMID_NARROW_STEP] = pyramidBroadStep/PYRAMID_DIVISIONS_NARROW; 
+    floatValues[FloatConstantIDs::SCAN_RANGE] = range;
     floatValues[FloatConstantIDs::FOCUS_METHOD_PARAMETER] = params.methodParameter;
     cudaMemcpyToSymbol(Kernels::Constants::floatConstants, floatValues.data(), floatValues.size() * sizeof(float));
 
@@ -244,7 +248,8 @@ void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
         {
             int gridID = row*colsRows.x + col; 
             float2 offset{(col-viewCoordinates.x)/colsRows.x, (row-viewCoordinates.y)/colsRows.y};
-            offset.y *= aspect;
+            if(useAspect)
+                offset.y *= aspect;
             offsets[gridID] = offset;
         }
     cudaMemcpyToSymbol(Kernels::offsets, offsets.data(), offsets.size() * sizeof(float2));
@@ -435,7 +440,10 @@ void Interpolator::interpolate(InterpolationParams params)
 void Interpolator::storeResults(std::string path, bool noMap)
 {
     std::cout << "Storing results..." << std::endl;
-    LoadingBar bar(OUTPUT_SURFACE_COUNT);
+    int count = OUTPUT_SURFACE_COUNT;
+    if(noMap)
+        count--;
+    LoadingBar bar(count);
     std::vector<uint8_t> data(resolution.x*resolution.y*resolution.z, 255);
 
     size_t pitch = resolution.x*resolution.z;
