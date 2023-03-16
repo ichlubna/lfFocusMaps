@@ -375,6 +375,10 @@ FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method) c
         return FocusMethod::ONE_DISTANCE;
     else if(method == "BF")
         return FocusMethod::BRUTE_FORCE;
+    else if(method == "BFET")
+        return FocusMethod::BRUTE_FORCE_EARLY;
+    else if(method == "TD")
+        return FocusMethod::TOP_DOWN;
     else if(method == "RAND")
         return FocusMethod::RANDOM;
     else if(method == "HIER")

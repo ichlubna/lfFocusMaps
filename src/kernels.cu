@@ -1,5 +1,4 @@
 #include <glm/glm.hpp>
-#include <cuda_fp16.h>
 #include <curand_kernel.h>
 #include "methods.h"
 
@@ -165,7 +164,7 @@ namespace Kernels
                  
                 case YUVw:            
                 {
-                    dist = fmaxf(fmaxf(fabsf(a[0]-b[0])*0.25, fabsf(a[1]-b[1])), fabsf(a[2]-b[2]));
+                    dist = fmaxf(fmaxf(fabsf(a[0]-b[0])*0.25f, fabsf(a[1]-b[1])), fabsf(a[2]-b[2]));
                 }
                 break;
 
@@ -528,6 +527,7 @@ namespace Kernels
                 return b;
         }
 
+        template<bool earlyTermination>
         __device__ float bruteForce(float2 coords)
         {
             int steps = Constants::focusMethodParameter();
@@ -535,44 +535,94 @@ namespace Kernels
             float focus{0.0f};
             Optimum optimum;
             
+            int wasMin{0};
+            int terminateIn{steps>>2}; 
             for(int step=0; step<steps; step++)
             {
                 float dispersion = FocusLevel::evaluate(coords, focus);
-                optimum.add(focus, dispersion);
+                if constexpr(earlyTermination)
+                {
+                    if(!optimum.add(focus, dispersion))
+                    {
+                        if(++wasMin > terminateIn)
+                            break;
+                    }
+                    else
+                        wasMin = 0;
+                }
+                else
+                    optimum.add(focus, dispersion);
                 focus += stepSize;  
             }
             return optimum.optimalFocus;
         }
         
-        __device__ float randomSampling(float2 coords)
+        __device__ float topDown(float2 coords)
         {
-            unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
-            curandState state;
-            curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
-            int steps = Constants::focusMethodParameter();
-            int range = Constants::scanRange();
+            int steps = 3;
+            float step{static_cast<float>(Constants::scanRange())*0.5f};
+            float focus{0.0f};
             Optimum optimum;
             
-            for(int step=0; step<steps; step++)
+            int wasMin{0};
+            int terminateIn{5};
+
+            for(int j=0; j<steps; j++) 
             {
-                float focus = range*curand_uniform(&state) ;
                 float dispersion = FocusLevel::evaluate(coords, focus);
                 optimum.add(focus, dispersion);
+                focus += step;
             }
-
+            steps = 2;
+            step *= 0.5f;
+            while(true)
+            {
+                int stepsDoubled = steps*2;
+                for(int i=1; i<stepsDoubled; i+=2)
+                {
+                    focus = i*step; 
+                    float dispersion = FocusLevel::evaluate(coords, focus);
+                        if(!optimum.add(focus, dispersion))
+                        {
+                            if(++wasMin > terminateIn)
+                                return optimum.optimalFocus;
+                        }
+                        else
+                            wasMin = 0;
+                }
+                steps <<= 1;
+                step *=0.5f;
+            }
+        }
+ 
+        __device__ float randomSampling(float2 coords)
+        {
+            curandState state;
+            int2 res = Constants::imgRes();
+            unsigned int a =Constants::ClockSeed()+ coords.y*res.y*res.x +  coords.x*res.x; 
+            curand_init(Constants::ClockSeed()+a,0, 0, &state);
+            float range = Constants::scanRange();
+            Optimum optimum;
+           
+            int wasMin{0}; 
+            constexpr int TERMINATE_IN{5};
+            while(true)
+            {
+                float focus = range*curand_uniform(&state);
+                float dispersion = FocusLevel::evaluate(coords, focus);
+                if(!optimum.add(focus, dispersion))
+                {
+                    if(++wasMin > TERMINATE_IN)
+                        break;
+                }
+                else
+                    wasMin = 0;
+            }
             return optimum.optimalFocus;
         }
        
-        template <bool stochastic> 
         __device__ float hierarchical(float2 coords)
         {
-            curandState state;
-            if constexpr (stochastic)
-            {
-                unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
-                curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
-            }
-
             int range = Constants::scanRange();
             Optimum optimum; 
             bool divide{true};
@@ -606,16 +656,8 @@ namespace Kernels
             return optimum.optimalFocus;
         }
         
-        template <bool stochastic> 
         __device__ float descent(float2 coords)
         {
-            curandState state;
-            if constexpr (stochastic)
-            {
-                unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
-                curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
-            }
-
             constexpr int MAX_STEPS{100};
             Optimum optimum[DESCENT_START_POINTS];
             constexpr float LEARN_RATE{0.1f};
@@ -645,16 +687,8 @@ namespace Kernels
             return minimal.optimalFocus;
         }
         
-        template <bool stochastic> 
         __device__ float pyramid(float2 coords)
         {
-            curandState state;
-            if constexpr (stochastic)
-            {
-                unsigned int linearID = coords.y*Constants::imgRes().x + coords.x;
-                curand_init(Constants::ClockSeed()+linearID, 0, 0, &state);
-            }
-
             float broadStep = Constants::pyramidBroadStep();
             Constants::setMipTextures();
             Optimum optimumBroad;
@@ -681,7 +715,7 @@ namespace Kernels
 
     __global__ void process()
     {
-        int2 threadCoords = getImgCoords(); 
+        int2 threadCoords = getImgCoords();
         if(coordsOutside(threadCoords, Constants::imgRes()))
             return;
         float2 coords = {static_cast<float>(threadCoords.x)/Constants::imgRes().x,
@@ -700,32 +734,31 @@ namespace Kernels
             break;
 
             case BRUTE_FORCE:
-                focus = Focusing::bruteForce(coords);
+                focus = Focusing::bruteForce<false>(coords);
+            break;
+           
+            case BRUTE_FORCE_EARLY:
+                focus = Focusing::bruteForce<true>(coords);
             break;
             
             case RANDOM:
                 focus = Focusing::randomSampling(coords);
             break;
             
+            case TOP_DOWN:
+                focus = Focusing::topDown(coords);
+            break;
+            
             case PYRAMID:
-                if(Constants::focusMethodParameter())
-                    focus = Focusing::pyramid<true>(coords);
-                else
-                    focus = Focusing::pyramid<false>(coords);
+                focus = Focusing::pyramid(coords);
             break;
             
             case HIERARCHY:
-                if(Constants::focusMethodParameter())
-                    focus = Focusing::hierarchical<true>(coords);
-                else
-                    focus = Focusing::hierarchical<false>(coords);
+                focus = Focusing::hierarchical(coords);
             break;
             
             case DESCENT:
-                if(Constants::focusMethodParameter())
-                    focus = Focusing::descent<true>(coords);
-                else
-                    focus = Focusing::descent<false>(coords);
+                focus = Focusing::descent(coords);
             break;
 
             default:

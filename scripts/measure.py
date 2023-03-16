@@ -34,9 +34,11 @@ def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRa
     return command
 
 def run(inputDir, referenceDir, inputRange):
-    scanMethods = [ ("BF", 16), ("BF", 32), ("BF", 64), ("BF", 128), ("BF", 256)
-                    ("RAND", 16), ("RAND", 32), ("RAND", 64)
-                    ("HIER", 0), ("HIER", 1), ("DESC", 0), ("DESC", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1), ("PYR", 0), ("PYR", 1) ]
+    scanMethods = [ ("BF", 32), ("BF", 64), ("BF", 128)
+                    ("BFET", 32), ("BFET", 64), ("BFET", 128),
+                    ("RAND"), ("TD"),
+                    ("HIER", 0), ("DESC", 0),
+                    ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0),  ]
     scanMetric = [ "VAR", "RANGE", "IQR", "MAD" ]
     addressModes = [ "WRAP", "CLAMP", "MIRROR", "BORDER", "BLEND" ]
     preprocesses = [ "NONE", "CONTRAST", "EDGE", "SHARPEN", "EQUAL", "SINE_FAST", "SINE_SLOW", "DENOISE", "MEDIAN", "BILATERAL"]
@@ -68,8 +70,7 @@ def run(inputDir, referenceDir, inputRange):
             if str(scanMethod[0]) == "PYR":
                 pyramidMode = pyramidPreprocess[pyramidID]
                 prepr.preprocess(inputDir, downPath, pyramidMode)
-                if scanMethod[1] == 1:
-                    pyramidID +=1
+                pyramidID +=1
             for addressMode in addressModes:
                 for scanSpace in np.linspace(0.5,3,30)
                     for scanMetric in scanMetrics:
