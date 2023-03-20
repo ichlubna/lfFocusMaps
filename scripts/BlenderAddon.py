@@ -242,8 +242,53 @@ class LFDepth(bpy.types.Operator):
     bl_idname = "lf.depth"
     bl_label = "Depth"
     
+    class BackupData:
+        resolution = [0,0]
+        fileFormat = None
+        overrideMaterial = None
+        colorDepth = None
+        colorMode = None
+        world = None
+        
+    backupData = BackupData()
+    
+    def pushBackup(self, context):
+        renderInfo = bpy.context.scene.render
+        self.backupData.resolution[0] = renderInfo.resolution_x
+        self.backupData.resolution[1] = renderInfo.resolution_y
+        self.backupData.fileFormat = renderInfo.image_settings.file_format 
+        self.backupData.overrideMaterial = context.window.view_layer.material_override
+        self.backupData.colorDepth = renderInfo.image_settings.color_depth
+        self.backupData.colorMode = renderInfo.image_settings.color_mode  
+        self.backupData.world = bpy.context.scene.world      
+        
+    def popBackup(self, context):
+        renderInfo = bpy.context.scene.render
+        renderInfo.resolution_x = self.backupData.resolution[0]
+        renderInfo.resolution_y = self.backupData.resolution[1]
+        renderInfo.image_settings.file_format = self.backupData.fileFormat
+        context.window.view_layer.material_override = self.backupData.overrideMaterial
+        renderInfo.image_settings.color_depth = self.backupData.colorDepth
+        renderInfo.image_settings.color_mode = self.backupData.colorMode
+        bpy.context.scene.world = self.backupData.world
+    
+    def createWorld(self, context):
+        materialName = "LFworldMaterial"
+        material = bpy.data.worlds.get(materialName) or bpy.data.worlds.new(name=materialName)
+        material.use_nodes = True
+        material.node_tree.nodes.clear()
+        
+        materialOut = material.node_tree.nodes.new('ShaderNodeOutputWorld')
+        materialOut.location[0]=400  
+        background = material.node_tree.nodes.new('ShaderNodeBackground')
+        background.location[0]=200 
+        
+        background.inputs[1].default_value = 0
+        
+        material.node_tree.links.new(materialOut.inputs[0], background.outputs[0])        
+    
     def createMaterial(self, context):
-        materialName = "coordsMaterial"
+        materialName = "LFcoordsMaterial"
         material = bpy.data.materials.get(materialName) or bpy.data.materials.new(name=materialName)
         material.use_nodes = True
         material.node_tree.nodes.clear()
@@ -278,18 +323,25 @@ class LFDepth(bpy.types.Operator):
         
         return material
     
-    def renderDepth(self, context):
-        material = self.createMaterial(context)
-        context.window.view_layer.material_override = material 
+    def setRenderSettings(self, context):
         renderInfo = bpy.context.scene.render
-        
-        originalResX = renderInfo.resolution_x
-        originalResY = renderInfo.resolution_y
+        renderInfo.image_settings.file_format = "OPEN_EXR"
+        renderInfo.image_settings.exr_codec = "ZIP"
+        renderInfo.image_settings.color_depth = "32"
+        renderInfo.image_settings.color_mode = "RGBA"
         rx = 1920
-        ry = int(rx*(float(originalResY)/originalResX))
+        ry = int(rx*(float(renderInfo.resolution_y)/renderInfo.resolution_x))
         renderInfo.resolution_x = rx
         renderInfo.resolution_y = ry
-        #RGBA set and background color black
+    
+    def renderDepth(self, context):        
+        self.pushBackup(context)
+        
+        self.setRenderSettings(context)
+        
+        material = self.createMaterial(context)
+        context.window.view_layer.material_override = material
+        bpy.context.scene.world = self.createWorld(context)
         
         bpy.ops.render.render( write_still=False )
         depth = 0  
@@ -298,11 +350,12 @@ class LFDepth(bpy.types.Operator):
             bpy.data.images['Render Result'].save_render(tmpFile)
             image = bpy.data.images.load(tmpFile)
             depths = numpy.array(image.pixels)[2::4]
-            filter = depths > 0.01
+            filter = depths > 0.00001
             depth = numpy.mean(depths[filter])          
-        renderInfo.resolution_x = originalResX
-        renderInfo.resolution_y = originalResY
-        context.window.view_layer.material_override = None
+
+        self.popBackup(context)
+        if math.isnan(depth):
+            depth = 0
         return depth*bpy.context.scene.camera.data.clip_end
     
     def createObject(self, context, depth):
