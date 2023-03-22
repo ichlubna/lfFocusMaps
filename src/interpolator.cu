@@ -66,6 +66,7 @@ int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
         cudaAddressMode = cudaAddressModeBorder;
     break;
     case BLEND:
+    case ALTER:
         cudaAddressMode = cudaAddressModeClamp;
     break;
     }
@@ -91,7 +92,6 @@ int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
     cudaTextureDesc texDescr;
     memset(&texDescr, 0, sizeof(cudaTextureDesc));
     texDescr.filterMode = cudaFilterModeLinear;
-    //cudaAddressMode = cudaAddressModeBorder;
     texDescr.normalizedCoords = true;
     texDescr.addressMode[0] = cudaAddressMode;
     texDescr.addressMode[1] = cudaAddressMode;
@@ -189,11 +189,11 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     intValues[IntConstantIDs::SCAN_METRIC] = params.metric;
     intValues[IntConstantIDs::FOCUS_METHOD] = params.method;
     intValues[IntConstantIDs::CLOSEST_VIEWS] = params.closestViews;
-    intValues[IntConstantIDs::BLOCK_SAMPLING] = params.blockSampling;
+    intValues[IntConstantIDs::BLOCK_SAMPLING] = (params.blockSampling > 0.000000001);
     intValues[IntConstantIDs::YUV_DISTANCE] = params.colorDistance;
     intValues[IntConstantIDs::NO_MAP] = params.noMap;
     intValues[IntConstantIDs::CLOCK_SEED] = std::clock();
-    intValues[IntConstantIDs::BLEND_ADDRESS_MODE] = (addressMode == AddressMode::BLEND);
+    intValues[IntConstantIDs::BLEND_ADDRESS_MODE] = addressMode;
     cudaMemcpyToSymbol(Kernels::Constants::intConstants, intValues.data(), intValues.size() * sizeof(int));
     
     std::vector<float> floatValues(FloatConstantIDs::FLOAT_CONSTANTS_COUNT);
@@ -213,9 +213,6 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     dataPointers[DataPointersIDs::TEXTURES] = reinterpret_cast<void*>(textureObjectsArr);
     dataPointers[DataPointersIDs::SECONDARY_TEXTURES] = reinterpret_cast<void*>(secondaryTextureObjectsArr);
     dataPointers[DataPointersIDs::MIP_TEXTURES] = reinterpret_cast<void*>(mipTextureObjectsArr);
-    dataPointers[DataPointersIDs::WEIGHTS] = reinterpret_cast<void*>(weightsGPU);
-    dataPointers[DataPointersIDs::CLOSEST_WEIGHTS] = reinterpret_cast<void*>(closestFramesWeightsGPU);
-    dataPointers[DataPointersIDs::CLOSEST_COORDS] = reinterpret_cast<void*>(closestFramesCoordsLinearGPU);
     cudaMemcpyToSymbol(Kernels::Constants::dataPointers, dataPointers.data(), dataPointers.size() * sizeof(void*));
             
     constexpr float START_STEP{1.0f/(DESCENT_START_POINTS)};
@@ -237,6 +234,10 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     }
     cudaMemcpyToSymbol(Kernels::Constants::hierarchySteps, hierarchySteps, HIERARCHY_DIVISIONS * sizeof(float));
     cudaMemcpyToSymbol(Kernels::Constants::hierarchySamplings, hierarchySamplings, HIERARCHY_DIVISIONS * sizeof(int));
+  
+    float2 pixelSize{params.blockSampling*(1.0f/resolution.x), params.blockSampling*(1.0f/resolution.y)}; 
+    std::vector<float2> blockOffsets{ {0.0f, 0.0f}, {-1.0f*pixelSize.x, 0.5f*pixelSize.y}, {0.5f*pixelSize.x, 1.0f*pixelSize.y}, {1.0f*pixelSize.x, -0.5f*pixelSize.y}, {-0.5f*pixelSize.x, -1.0f*pixelSize.y} };
+    cudaMemcpyToSymbol(Kernels::Constants::blockOffsets, blockOffsets.data(), BLOCK_OFFSET_COUNT * sizeof(float2));
 }
 
 void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
@@ -247,12 +248,12 @@ void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
         for(int row=0; row<colsRows.y; row++)
         {
             int gridID = row*colsRows.x + col; 
-            float2 offset{(col-viewCoordinates.x)/colsRows.x, (row-viewCoordinates.y)/colsRows.y};
+            float2 offset{(viewCoordinates.x-col)/colsRows.x, (viewCoordinates.y-row)/colsRows.y};
             if(useAspect)
                 offset.y *= aspect;
             offsets[gridID] = offset;
         }
-    cudaMemcpyToSymbol(Kernels::offsets, offsets.data(), offsets.size() * sizeof(float2));
+    cudaMemcpyToSymbol(Kernels::Constants::offsets, offsets.data(), offsets.size() * sizeof(float2));
 }
 
 std::vector<float> Interpolator::generateWeights(glm::vec2 coords)
@@ -274,9 +275,8 @@ std::vector<float> Interpolator::generateWeights(glm::vec2 coords)
 
 void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
 {
-    cudaMalloc(reinterpret_cast<void **>(&weightsGPU), sizeof(float)*colsRows.x*colsRows.y);
     auto weights = generateWeights(viewCoordinates);
-    cudaMemcpy(weightsGPU, weights.data(), weights.size()*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpyToSymbol(Kernels::Constants::weights, weights.data(), weights.size() * sizeof(float));
 }
 
 glm::vec2 Interpolator::InterpolationParams::parseCoordinates(std::string coordinates) const
@@ -318,11 +318,8 @@ void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
     for(auto const &coords : closestFramesCoords)
        closestFramesCoordsLinear.push_back(coords.y*colsRows.x+coords.x); 
      
-    cudaMalloc(reinterpret_cast<void **>(&closestFramesCoordsLinearGPU), sizeof(int)*closestFramesCoordsLinear.size());
-    cudaMemcpy(closestFramesCoordsLinearGPU, closestFramesCoordsLinear.data(), closestFramesCoordsLinear.size()*sizeof(int), cudaMemcpyHostToDevice);
-    
-    cudaMalloc(reinterpret_cast<void **>(&closestFramesWeightsGPU), sizeof(float)*closestFramesWeights.size());
-    cudaMemcpy(closestFramesWeightsGPU, closestFramesWeights.data(), closestFramesWeights.size()*sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpyToSymbol(Kernels::Constants::closestCoords, closestFramesCoordsLinear.data(), closestFramesCoordsLinear.size() * sizeof(int));
+    cudaMemcpyToSymbol(Kernels::Constants::closestWeights, closestFramesWeights.data(), closestFramesWeights.size() * sizeof(float));    
 }
 
 ColorDistance Interpolator::InterpolationParams::parseColorDistance(std::string distance) const
@@ -365,6 +362,8 @@ AddressMode Interpolator::parseAddressMode(std::string addressMode) const
         return AddressMode::MIRROR;
     else if(addressMode == "BLEND")
         return AddressMode::BLEND;
+    else if(addressMode == "ALTER")
+        return AddressMode::ALTER;
     std::cerr << "Texture address mode set to default." << std::endl;
     return AddressMode::CLAMP;
 }
@@ -394,7 +393,6 @@ FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method) c
 void Interpolator::runKernel(KernelType type, KernelParams params)
 {
     dim3 dimBlock(16, 16, 1);
-
     switch(type)
     {
         case PROCESS:

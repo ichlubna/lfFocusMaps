@@ -7,7 +7,7 @@ int main(int argc, char **argv)
     std::string helpText{ "Usage:\n"
                           "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
                           "-i - folder with lf grid images - named as column_row.extension, e.g.: 01_12.jpg\n"
-                          "-l - uses secondary folder with same filenames for focusing, e.g.: -i my/folder => my contains folder and folder_sec \n"
+                          "-l - uses secondary folder with same filenames for focusing, e.g.: -i my/folder => my contains folder and folder_sec (flag) \n"
                           "-c - camera position in normalized coordinates of the grid in format: x_y, e.g., 0.5_0.1\n"
                           "-o - output path\n"
                           "-m - method:\n"
@@ -34,15 +34,15 @@ int main(int argc, char **argv)
                           "     Y - difference between Y values (intensity without color)\n"
                           "     YUV - Chebyshev YUV\n"
                           "     YUVw - Weighted Chebyshev YUV - more focus on colors\n"
-                          "-b - block sampling - uses also neighboring pixels for matching\n"
-                          "-f - use faster variant with only four closest views\n"
+                          "-b - block sampling - uses also neighboring pixels for matching and takes float number > 0 (0 means that no block sampling will be used and is default)\n"
+                          "-f - use faster variant with only four closest views (flag)\n"
                           "-r - normalized scanning range - the maximum disparity between input images, default is half of image width - 0.5\n"
                           "-d - order of the distance function, e.g., 2 => distance = distance^2, default is 1"
                           "-t - number of kernel runs for performance measurement - default is 1\n"
-                          "-a - address mode - what to sample outside the images: WRAP, CLAMP, MIRROR, BORDER, BLEND - default is CLAMP\n"
-                          "-n - will not store focus map\n"
+                          "-a - address mode - what to sample outside the images: WRAP, CLAMP, MIRROR, BORDER, BLEND, ALTER - default is CLAMP\n"
+                          "-n - will not store focus map (flag)\n"
                           "-g - use this if the input dataset was captured with the same spacing in horizontal and vertical axis\n"
-                          "     if this option is not used, the lf grid spacing is expected to be in the same ratio as resolution\n"
+                          "     if this option is not used, the lf grid spacing is expected to be in the same ratio as resolution (flag)\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;
@@ -69,7 +69,7 @@ int main(int argc, char **argv)
         ->setOutputPath(static_cast<std::string>(args["-o"]))
         ->setRuns(std::stoi(static_cast<std::string>(args["-t"])))
         ->setDistanceOrder(static_cast<int>(args["-d"]))
-        ->setBlockSampling(static_cast<bool>(args["-b"]))
+        ->setBlockSampling(static_cast<float>(args["-b"]))
         ->setClosestViews(static_cast<bool>(args["-f"]))
         ->setColorDistance(static_cast<std::string>(args["-y"]))
         ->setNoMap(static_cast<bool>(args["-n"]));

@@ -54,7 +54,7 @@ class Interpolator
             return this;
         }
         
-        InterpolationParams* setBlockSampling(bool block=true)
+        InterpolationParams* setBlockSampling(float block)
         {
             blockSampling = block;
             return this;
@@ -111,7 +111,7 @@ class Interpolator
         ScanMetric metric;
         float methodParameter;
         bool closestViews{false};
-        bool blockSampling{false};
+        float blockSampling{0};
         bool noMap{false};
         ColorDistance colorDistance;
         float scanRange;
@@ -160,8 +160,6 @@ class Interpolator
     void *mipTextureObjectsArr;
     const std::vector<std::string> fileNames{"focusMap", "renderImage"};
     float *weightsGPU;
-    float *closestFramesWeightsGPU;
-    int *closestFramesCoordsLinearGPU;
     size_t channels{4};
     size_t sharedSize{0};
     glm::ivec2 colsRows;

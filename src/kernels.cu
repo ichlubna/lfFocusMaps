@@ -26,7 +26,7 @@ namespace Kernels
         __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
         __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
         __device__ ColorDistance YUVDistance(){return static_cast<ColorDistance>(intConstants[IntConstantIDs::YUV_DISTANCE]);}
-        __device__ bool blendAddressMode(){return intConstants[IntConstantIDs::BLEND_ADDRESS_MODE];}
+        __device__ int addressMode(){return intConstants[IntConstantIDs::BLEND_ADDRESS_MODE];}
         __device__ bool noMap(){return intConstants[IntConstantIDs::NO_MAP];}
         __device__ int ClockSeed(){return intConstants[IntConstantIDs::CLOCK_SEED];}
         
@@ -47,9 +47,6 @@ namespace Kernels
                 break;
             }
         }
-        __device__ float* closestWeights(){return reinterpret_cast<float*>(dataPointers[DataPointersIDs::CLOSEST_WEIGHTS]);}
-        __device__ float* weights(){return reinterpret_cast<float*>(dataPointers[DataPointersIDs::WEIGHTS]);}
-        __device__ int* closestCoords(){return reinterpret_cast<int*>(dataPointers[DataPointersIDs::CLOSEST_COORDS]);}
         
         __constant__ float floatConstants[FloatConstantIDs::FLOAT_CONSTANTS_COUNT];
         __device__ float scanSpace(){return floatConstants[FloatConstantIDs::SPACE];}
@@ -59,13 +56,17 @@ namespace Kernels
         __device__ float pyramidNarrowStep(){return floatConstants[FloatConstantIDs::PYRAMID_NARROW_STEP];}
         __device__ float focusMethodParameter(){return floatConstants[FloatConstantIDs::FOCUS_METHOD_PARAMETER];}
 
+        __device__ constexpr int MAX_IMAGES{256};
         __constant__ float descentStartPoints[DESCENT_START_POINTS];
+        __constant__ float weights[MAX_IMAGES];
+        __constant__ int closestCoords[4];
+        __constant__ float closestWeights[4];
+        __constant__ float2 offsets[MAX_IMAGES];
         __constant__ float hierarchySteps[HIERARCHY_DIVISIONS];
-        __constant__ int hierarchySamplings[HIERARCHY_DIVISIONS];
+        __constant__ int hierarchySamplings[HIERARCHY_DIVISIONS]; 
+        __constant__ float2 blockOffsets[BLOCK_OFFSET_COUNT];
     }
 
-    __device__ constexpr int MAX_IMAGES{256};
-    __constant__ float2 offsets[MAX_IMAGES];
     //extern __shared__ half localMemory[];
 
         class PixelArray
@@ -183,23 +184,47 @@ namespace Kernels
         __device__ PixelArray load(int imageID, float2 coords)
         {
             int id = Constants::textures()[imageID];
-            if(Constants::blendAddressMode())
+            switch(Constants::addressMode())
             {
-                constexpr float SPREAD{0.0015f};
-                float offset{0};
-                if(coords.x > 1.0f || coords.x < 0.0f)
-                    offset += floor(coords.x)*SPREAD;
-                if(coords.y > 1.0f || coords.y < 0.0f)
-                    offset += floor(coords.y)*SPREAD;
-                PixelArray pixel;
-                const float2 offsets[4] = {{offset, offset}, {offset, -offset}, {-offset, -offset}, {-offset, offset}};
-                for(int i=0; i<4; i++)
-                    pixel += tex2D<float4>(id, coords.x+offsets[i].x, coords.y+offsets[i].y); 
-                return pixel/4;
-            }    
-            else
-                return tex2D<float4>(id, coords.x, coords.y);
-        } 
+                case AddressMode::ALTER:
+                {
+                    float2 c = coords;
+                    auto resolution = Constants::imgRes();
+                    float2 pixel{1.0f/resolution.x, 1.0f/resolution.y};
+                    int2 odd{int(round(coords.x*resolution.x))%2, int(round(coords.y*resolution.y))%2};
+                    if(coords.x > 1.0f && odd.x == 0)
+                           c.x = coords.x-pixel.x; 
+                    else if(coords.x < 0.0f && odd.x == 0)
+                           c.x = coords.x-pixel.x; 
+                    if(coords.y > 1.0f && odd.y == 0)
+                           c.y = coords.y-pixel.y; 
+                    else if(coords.y < 0.0f && odd.y == 0)
+                           c.y = coords.y+pixel.y; 
+                    return tex2D<float4>(id, c.x, c.y);
+                }
+                break;
+
+                case AddressMode::BLEND:
+                {
+                    constexpr float SPREAD{0.0015f};
+                    float offset{0};
+                    if(coords.x > 1.0f || coords.x < 0.0f)
+                        offset += floor(coords.x)*SPREAD;
+                    if(coords.y > 1.0f || coords.y < 0.0f)
+                        offset += floor(coords.y)*SPREAD;
+                    PixelArray pixel;
+                    const float2 offsets[4] = {{offset, offset}, {offset, -offset}, {-offset, -offset}, {-offset, offset}};
+                    for(int i=0; i<4; i++)
+                        pixel += tex2D<float4>(id, coords.x+offsets[i].x, coords.y+offsets[i].y); 
+                    return pixel/4;
+                }
+                break;
+        
+                default:
+                    return tex2D<float4>(id, coords.x, coords.y);
+                break;
+            } 
+        }
     }
 
     namespace ScanMetrics
@@ -359,8 +384,9 @@ namespace Kernels
 
     __device__ float2 focusCoords(int gridID, float2 pxCoords, float focus)
     {
-        float2 offset = offsets[gridID];
-        float2 coords{pxCoords.x-offset.x*focus, pxCoords.y-offset.y*focus};
+        float2 offset = Constants::offsets[gridID];
+        //float2 coords{offset.x*focus+pxCoords.x, offset.y*focus+pxCoords.y};
+        float2 coords{__fmaf_rn(offset.x, focus, pxCoords.x), __fmaf_rn(offset.y, focus, pxCoords.y)};
         return coords;
     }
 
@@ -380,10 +406,10 @@ namespace Kernels
         __device__ void evaluateBlock(int gridID, float focus, float2 coords, T *dispersions)
         {
             float transformedFocus = transformFocus(focus, Constants::scanRange(), Constants::scanSpace());
-            const float2 BLOCK_OFFSETS[]{ {0.0f,0.0f}, {-1.0f,0.5f}, {0.5f, 1.0f}, {1.0f,-0.5f}, {-0.5f,-1.0f} };
             for(int blockPx=0; blockPx<blockSize; blockPx++)
             {
-                float2 inBlockCoords{coords.x+BLOCK_OFFSETS[blockPx].x, coords.y+BLOCK_OFFSETS[blockPx].y};
+                float2 offset = Constants::blockOffsets[blockPx]; 
+                float2 inBlockCoords{coords.x+offset.x, coords.y+offset.y};
                 auto px{Pixel::load(gridID, focusCoords(gridID, inBlockCoords, transformedFocus))};
                 dispersions[blockPx] += px;
             }
@@ -399,10 +425,9 @@ namespace Kernels
 
             if constexpr (closest)
             {  
-                auto closestCoords = Constants::closestCoords();
                 for(int i=0; i<CLOSEST_COUNT; i++) 
                 {     
-                    int gridID = closestCoords[i];
+                    int gridID = Constants::closestCoords[i];
                     evaluateBlock<blockSize>(gridID, focus, coords, dispersionCalc);
                 }           
             }
@@ -468,18 +493,16 @@ namespace Kernels
             
             if constexpr (closest)
             {
-                auto closestCoords = Constants::closestCoords();
-                auto weights = Constants::closestWeights();
                 for(int i=0; i<CLOSEST_COUNT; i++) 
                 {
-                    gridID = closestCoords[i];
+                    gridID = Constants::closestCoords[i];
                     auto px{Pixel::load(gridID, focusCoords(gridID, coords, focus))};
-                    sum.addWeighted(weights[i], px);
+                    sum.addWeighted(Constants::closestWeights[i], px);
                 }
             }
             else
             {
-                auto weights = Constants::weights();
+                auto weights = Constants::weights;
                 for(int row=0; row<cr.y; row++) 
                 {     
                     gridID = row*cr.x;
@@ -631,7 +654,7 @@ namespace Kernels
             {  
                 Optimum leftRightOptimum[2];
                 int sampling = Constants::hierarchySamplings[d];
-                int samplingHalf = sampling/2;
+                int samplingHalf = sampling >> 1;
                 float focus = dividedRange.x;
                 for(int i=0; i<sampling; i++)
                 {
@@ -718,6 +741,7 @@ namespace Kernels
         int2 threadCoords = getImgCoords();
         if(coordsOutside(threadCoords, Constants::imgRes()))
             return;
+ 
         float2 coords = {static_cast<float>(threadCoords.x)/Constants::imgRes().x,
                         static_cast<float>(threadCoords.y)/Constants::imgRes().y};
 

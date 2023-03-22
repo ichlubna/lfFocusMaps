@@ -40,7 +40,7 @@ def run(inputDir, referenceDir, inputRange):
                     ("HIER", 0), ("DESC", 0),
                     ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0),  ]
     scanMetric = [ "VAR", "RANGE", "IQR", "MAD" ]
-    addressModes = [ "WRAP", "CLAMP", "MIRROR", "BORDER", "BLEND" ]
+    addressModes = [ "WRAP", "CLAMP", "MIRROR", "BORDER", "BLEND", "ALTER" ]
     preprocesses = [ "NONE", "CONTRAST", "EDGE", "SHARPEN", "EQUAL", "SINE_FAST", "SINE_SLOW", "DENOISE", "MEDIAN", "BILATERAL"]
     pyramidPreprocess = [ "RESIZE_QUARTER", "RESIZE_EIGHTH", "GAUSSIAN_ULTRA_HEAVY", "GAUSSIAN_HEAVY", "GAUSSIAN_LIGHT"]
     distanceOrders = [ 1,2,3,4 ]
@@ -72,10 +72,10 @@ def run(inputDir, referenceDir, inputRange):
                 prepr.preprocess(inputDir, downPath, pyramidMode)
                 pyramidID +=1
             for addressMode in addressModes:
-                for scanSpace in np.linspace(0.5,3,30)
+                for scanSpace in np.linspace(0.5,3,21)
                     for scanMetric in scanMetrics:
                         for distanceOrder in distanceOrders:
-                            for block in [True, False]:
+                            for block in np.linspace(0,20,41):
                                 for fast in [True, False]:
                                     for colorDist in ["RGB, YUV, Y, YUVw"]:
                                         references = os.listdir(referenceDir)
@@ -83,7 +83,6 @@ def run(inputDir, referenceDir, inputRange):
                                         psnr = 0
                                         ssim = 0
                                         vmaf = 0
-                                        blockMode = "block" if block else "pixel"
                                         fastMode = "fast" if fast else "full"
                                         if pyramidMode != "":
                                             pyramidMode = "_"+pyramidMode
@@ -92,7 +91,7 @@ def run(inputDir, referenceDir, inputRange):
                                                 "scan_space:"       + str(scanSpace)        + "|" +
                                                 "scan_metric:"      + scanMetric            + "|" +
                                                 "preprocessing:"    + preprocess            + "|" +
-                                                "block_mode:"       + blockMode             + "|" +
+                                                "block_size:"       + blockSize             + "|" +
                                                 "fast_mode:"        + fastMode              + "|" +
                                                 "distance_order:"   + str(distanceOrder)    + "|" +
                                                 "color_distance:"   + colorDist             + "|" +
