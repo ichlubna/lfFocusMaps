@@ -14,6 +14,9 @@ import bpy
 import copy
 import os
 import time
+import math
+import numpy
+import tempfile
 import mathutils
 
 class LFPanel(bpy.types.Panel):
@@ -25,13 +28,21 @@ class LFPanel(bpy.types.Panel):
 
     def draw(self, context):
         col = self.layout.column(align=True)
+        col.prop(context.scene, "LFAnalysis")
+        if context.scene.LFAnalysis:
+            col.prop(context.scene, "LFObjectOfInterest")  
+            col.prop(context.scene, "LFAnalysisStep")
+            col.row().operator("lf.depth", text="Average depth")
+            if context.scene.LFObjectOfInterest == None:
+                col.row().label(text="Select an object")
+            else:
+                col.row().operator("lf.analyze", text="Analyze")
+      
         col.prop(context.scene, "LFStep")
         col.prop(context.scene, "LFGridSize")
         col.prop(context.scene, "LFAnimation")
-        rowRender = self.layout.row()
-        rowRender.operator("lf.render", text="Render")
-        rowPreview = self.layout.row()
-        rowPreview.operator("lf.preview", text="Preview")
+        col.row().operator("lf.render", text="Render")
+        col.row().operator("lf.preview", text="Preview")
         if context.scene.camera == None:
             rowPreview.enabled = rowRender.enabled = False
         if context.scene.camera == None:
@@ -226,6 +237,164 @@ class Progress(bpy.types.Operator, CameraManager):
         wm = context.window_manager
         wm.event_timer_remove(self.timer)
 
+class LFDepth(bpy.types.Operator):
+    """ Computes average depth of the scene and creates an empty there """
+    bl_idname = "lf.depth"
+    bl_label = "Depth"
+    
+    class BackupData:
+        resolution = [0,0]
+        fileFormat = None
+        overrideMaterial = None
+        colorDepth = None
+        colorMode = None
+        world = None
+        
+    backupData = BackupData()
+    
+    def pushBackup(self, context):
+        renderInfo = bpy.context.scene.render
+        self.backupData.resolution[0] = renderInfo.resolution_x
+        self.backupData.resolution[1] = renderInfo.resolution_y
+        self.backupData.fileFormat = renderInfo.image_settings.file_format 
+        self.backupData.overrideMaterial = context.window.view_layer.material_override
+        self.backupData.colorDepth = renderInfo.image_settings.color_depth
+        self.backupData.colorMode = renderInfo.image_settings.color_mode  
+        self.backupData.world = bpy.context.scene.world      
+        
+    def popBackup(self, context):
+        renderInfo = bpy.context.scene.render
+        renderInfo.resolution_x = self.backupData.resolution[0]
+        renderInfo.resolution_y = self.backupData.resolution[1]
+        renderInfo.image_settings.file_format = self.backupData.fileFormat
+        context.window.view_layer.material_override = self.backupData.overrideMaterial
+        renderInfo.image_settings.color_depth = self.backupData.colorDepth
+        renderInfo.image_settings.color_mode = self.backupData.colorMode
+        bpy.context.scene.world = self.backupData.world
+    
+    def createWorld(self, context):
+        materialName = "LFworldMaterial"
+        material = bpy.data.worlds.get(materialName) or bpy.data.worlds.new(name=materialName)
+        material.use_nodes = True
+        material.node_tree.nodes.clear()
+        
+        materialOut = material.node_tree.nodes.new('ShaderNodeOutputWorld')
+        materialOut.location[0]=400  
+        background = material.node_tree.nodes.new('ShaderNodeBackground')
+        background.location[0]=200 
+        
+        background.inputs[1].default_value = 0
+        
+        material.node_tree.links.new(materialOut.inputs[0], background.outputs[0])        
+    
+    def createMaterial(self, context):
+        materialName = "LFcoordsMaterial"
+        material = bpy.data.materials.get(materialName) or bpy.data.materials.new(name=materialName)
+        material.use_nodes = True
+        material.node_tree.nodes.clear()
+        
+        materialOut = material.node_tree.nodes.new('ShaderNodeOutputMaterial')
+        materialOut.location[0]=400  
+        emission = material.node_tree.nodes.new('ShaderNodeEmission')
+        emission.location[0]=200   
+        divide = material.node_tree.nodes.new('ShaderNodeVectorMath')
+        divide.operation="DIVIDE"
+        divide.location[0]=0  
+        planes = material.node_tree.nodes.new('ShaderNodeCombineXYZ')
+        planes.location[0]=-200
+        planes.location[1]=-200
+        multiply = material.node_tree.nodes.new('ShaderNodeVectorMath')
+        multiply.operation="MULTIPLY"
+        multiply.location[0]=-200  
+        cameraData = material.node_tree.nodes.new('ShaderNodeCameraData')
+        cameraData.location[0]=-400
+
+        clip = bpy.context.scene.camera.data.clip_end
+        planes.inputs[0].default_value = clip
+        planes.inputs[1].default_value = clip
+        planes.inputs[2].default_value = clip
+
+        material.node_tree.links.new(multiply.inputs[0], cameraData.outputs[0])
+        material.node_tree.links.new(multiply.inputs[1], cameraData.outputs[2])
+        material.node_tree.links.new(divide.inputs[0], multiply.outputs[0])
+        material.node_tree.links.new(divide.inputs[1], planes.outputs[0])
+        material.node_tree.links.new(emission.inputs[0], divide.outputs[0])
+        material.node_tree.links.new(materialOut.inputs[0], emission.outputs[0])
+        
+        return material
+    
+    def setRenderSettings(self, context):
+        renderInfo = bpy.context.scene.render
+        renderInfo.image_settings.file_format = "OPEN_EXR"
+        renderInfo.image_settings.exr_codec = "ZIP"
+        renderInfo.image_settings.color_depth = "32"
+        renderInfo.image_settings.color_mode = "RGBA"
+        rx = 1920
+        ry = int(rx*(float(renderInfo.resolution_y)/renderInfo.resolution_x))
+        renderInfo.resolution_x = rx
+        renderInfo.resolution_y = ry
+    
+    def renderDepth(self, context):        
+        self.pushBackup(context)
+        
+        self.setRenderSettings(context)
+        
+        material = self.createMaterial(context)
+        context.window.view_layer.material_override = material
+        bpy.context.scene.world = self.createWorld(context)
+        
+        bpy.ops.render.render( write_still=False )
+        depth = 0  
+        with tempfile.TemporaryDirectory() as tmpDir:   
+            tmpFile = os.path.join(tmpDir,"coords.exr")     
+            bpy.data.images['Render Result'].save_render(tmpFile)
+            image = bpy.data.images.load(tmpFile)
+            depths = numpy.array(image.pixels)[2::4]
+            filter = depths > 0.00001
+            depth = numpy.mean(depths[filter])          
+
+        self.popBackup(context)
+        if math.isnan(depth):
+            depth = 0
+        return depth*bpy.context.scene.camera.data.clip_end
+    
+    def createObject(self, context, depth):
+         empty = None
+         camera = context.scene.camera
+         direction = camera.matrix_world.to_quaternion() @ mathutils.Vector((0.0, 0.0, -1.0))
+         bpy.ops.object.empty_add(type='PLAIN_AXES', location = camera.location + direction.normalized()*depth) 
+         bpy.context.active_object.name = 'LFAverageDepth' 
+         return bpy.context.active_object
+        
+    def execute(self, context):
+        depth = self.renderDepth(context)
+        empty = self.createObject(context, depth)
+        context.scene.LFObjectOfInterest = empty        
+        return {"FINISHED"}
+
+class LFAnalyze(bpy.types.Operator):
+    """ Analyses the scene for optimal capturing """
+    bl_idname = "lf.analyze"
+    bl_label = "Analyze"
+    
+    def distanceToObject(self, context):
+        object = context.scene.LFObjectOfInterest
+        camera = context.scene.camera
+        return (object.location-camera.location).length
+    
+    def getOffset(self, context):
+        camera = context.scene.camera.data
+        d = self.distanceToObject(context)
+        o = context.scene.LFAnalysisStep
+        fx=math.tan(camera.angle_x/2)
+        fy=math.tan(camera.angle_y/2)
+        x = 2*d*(fy-fx)+o
+        return (o, x)
+    
+    def execute(self, context):
+        context.scene.LFStep = self.getOffset(context)
+        return {"FINISHED"}
+
 class LFRender(bpy.types.Operator, CameraTrajectory):
     """ Renders the LF structure """
     bl_idname = "lf.render"
@@ -272,9 +441,14 @@ def register():
     bpy.utils.register_class(LFPanel)
     bpy.utils.register_class(LFRender)
     bpy.utils.register_class(LFPreview)
+    bpy.utils.register_class(LFAnalyze)
+    bpy.utils.register_class(LFDepth)
+    bpy.types.Scene.LFObjectOfInterest = bpy.props.PointerProperty(name="Object of interest", description="The distance of this object will be used in the offset calculation", type=bpy.types.Object)
     bpy.types.Scene.LFStep = bpy.props.FloatVectorProperty(name="Step", size=2, description="The distance between cameras", min=0, default=(1.0,1.0), subtype="XYZ")
     bpy.types.Scene.LFGridSize = bpy.props.IntVectorProperty(name="Grid size", size=2, description="The total number of the views", min=2, default=(8,8), subtype="XYZ")
     bpy.types.Scene.LFAnimation = bpy.props.BoolProperty(name="Render animation", description="Will render all active frames as animation", default=False)
+    bpy.types.Scene.LFAnalysis = bpy.props.BoolProperty(name="Recalculate offset", description="Calculates the vertical camera spacing optimally", default=False)
+    bpy.types.Scene.LFAnalysisStep = bpy.props.FloatProperty(name="Step", description="The horizontal distance between cameras", min=0, default=1.0)
     bpy.types.Scene.LFProgress = bpy.props.FloatProperty(name="Progress", description="Progress bar", subtype="PERCENTAGE",soft_min=0, soft_max=100, default=0.0)
     bpy.types.Scene.LFCurrentView = bpy.props.IntVectorProperty(name="Current view", size=3, description="The currenty processed view - XY and third is linear ID", default=(0,0,0))
     bpy.types.Scene.LFCurrentTaskFinished = bpy.props.BoolProperty(name="Current view finished", description="Indicates that the current view was processed", default=True)
@@ -289,6 +463,8 @@ def unregister():
     bpy.utils.unregister_class(LFPanel)
     bpy.utils.unregister_class(LFRender)
     bpy.utils.unregister_class(LFPreview)
+    bpy.utils.unregister_class(LFAnalyze)
+    bpy.utils.unregister_class(LFDepth)
     
 if __name__ == "__main__" :
     register()        
