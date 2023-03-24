@@ -55,6 +55,7 @@ namespace Kernels
         __device__ float pyramidBroadStep(){return floatConstants[FloatConstantIDs::PYRAMID_BROAD_STEP];}
         __device__ float pyramidNarrowStep(){return floatConstants[FloatConstantIDs::PYRAMID_NARROW_STEP];}
         __device__ float focusMethodParameter(){return floatConstants[FloatConstantIDs::FOCUS_METHOD_PARAMETER];}
+        __device__ float2 pixelSize(){return {floatConstants[FloatConstantIDs::PX_SIZE_X], floatConstants[FloatConstantIDs::PX_SIZE_Y]};}
 
         __device__ constexpr int MAX_IMAGES{256};
         __constant__ float descentStartPoints[DESCENT_START_POINTS];
@@ -72,14 +73,16 @@ namespace Kernels
         class PixelArray
         {
             public:
+            static constexpr int CHANNEL_COUNT{3};
             __device__ PixelArray(){};
-            __device__ PixelArray(float4 pixel) : channels{pixel.x, pixel.y, pixel.z, pixel.w}{};
-            float channels[CHANNEL_COUNT]{0,0,0,0};
+            __device__ PixelArray(float4 pixel) : channels{pixel.x, pixel.y, pixel.z}{};
+            float channels[CHANNEL_COUNT]{0,0,0};
             __device__ float& operator[](int index){return channels[index];}
           
             __device__ uchar4 uch4() 
             {
                 uchar4 result;
+                result.w = 255;
                 auto data = reinterpret_cast<unsigned char*>(&result);
                 for(int i=0; i<CHANNEL_COUNT; i++)
                     data[i] = __float2int_rn(channels[i]*UCHAR_MAX);
@@ -190,7 +193,7 @@ namespace Kernels
                 {
                     float2 c = coords;
                     auto resolution = Constants::imgRes();
-                    float2 pixel{1.0f/resolution.x, 1.0f/resolution.y};
+                    float2 pixel{Constants::pixelSize()};
                     int2 odd{int(round(coords.x*resolution.x))%2, int(round(coords.y*resolution.y))%2};
                     if(coords.x > 1.0f && odd.x == 0)
                            c.x = coords.x-pixel.x; 
@@ -258,7 +261,7 @@ namespace Kernels
             }
         };
         
-        class Range
+        class ElementRange
         {
             private:
             PixelArray minCol{float4{FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX}};
@@ -276,78 +279,42 @@ namespace Kernels
             }
             __device__ float dispersionAmount()
             {
-                return Pixel::distance(minCol, maxCol);  
+                return Pixel::distance(minCol, maxCol); 
             }      
-            __device__ Range& operator+=(const PixelArray& rhs){
+            __device__ ElementRange& operator+=(const PixelArray& rhs){
 
               add(rhs);
               return *this;
             }
         };
-       
-        class Percentile
+
+        class Range
         {
             private:
-            float stepUp;
-            float stepDown;
-            float step{10};
-            float value{0};
-            bool init{false};
-
+            float2 range{FLT_MAX, FLT_MIN};
+            PixelArray origin;
+            
             public:
-            __device__ Percentile(float percentile)
+            __device__ void add(PixelArray &pixel)
             {
-                stepUp = 1.0f-percentile;
-                stepDown = percentile;
-            }
-            __device__ void add(PixelArray pixel)
-            {
-                PixelArray origin;
                 float dist = Pixel::distance(pixel, origin);
+                range.x = fminf(range.x, dist);
+                range.y = fmaxf(range.y, dist);
+            }
 
-                if(!init)
-                {
-                    value = dist;
-                    step = fmaxf(dist, 1.0f);
-                    init = true;
-                    return;
-                }
-                if(value > dist)
-                    value -= step*stepUp;
-                else if(value < dist)
-                    value += step*stepDown;
-                if(fabsf(value-dist) < step)
-                   step *= 0.5f; 
-            }
-            __device__ float result()
-            {
-                return value;
-            }
-        };
- 
-        class IQR
-        {
-            private:
-            Percentile first{0.25f};            
-            Percentile second{0.75};            
- 
-            public:
-            __device__ void add(PixelArray val)
-            {
-                first.add(val); 
-                second.add(val); 
-            }
             __device__ float dispersionAmount()
             {
-                return second.result()-first.result();
-            }      
-            __device__ IQR& operator+=(const PixelArray& rhs){
-
+                return range.y-range.x;
+            }    
+ 
+            __device__ Range& operator+=(PixelArray& rhs)
+            {
               add(rhs);
               return *this;
             }
+            
         };
-      
+ 
         class Mad
         {
             private:
@@ -463,7 +430,7 @@ namespace Kernels
         template<int blockSize, bool closest=false>
         __device__ float dispersion(ScanMetric t, float2 coords, float focus)
         {
-            return call<blockSize, closest, ScanMetrics::OnlineVariance, ScanMetrics::Range, ScanMetrics::IQR, ScanMetrics::Mad>(0,t, coords, focus);
+            return call<blockSize, closest, ScanMetrics::OnlineVariance, ScanMetrics::ElementRange, ScanMetrics::Range, ScanMetrics::Mad>(0,t, coords, focus);
         }
 
         __device__ float evaluate(float2 coords, float focus)

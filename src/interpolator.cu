@@ -206,6 +206,9 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     floatValues[FloatConstantIDs::PYRAMID_NARROW_STEP] = pyramidBroadStep/PYRAMID_DIVISIONS_NARROW; 
     floatValues[FloatConstantIDs::SCAN_RANGE] = range;
     floatValues[FloatConstantIDs::FOCUS_METHOD_PARAMETER] = params.methodParameter;
+    float2 pixelSize{1.0f/resolution.x, 1.0f/resolution.y}; 
+    floatValues[FloatConstantIDs::PX_SIZE_X] = pixelSize.x;
+    floatValues[FloatConstantIDs::PX_SIZE_Y] = pixelSize.y;
     cudaMemcpyToSymbol(Kernels::Constants::floatConstants, floatValues.data(), floatValues.size() * sizeof(float));
 
     std::vector<void*> dataPointers(DataPointersIDs::POINTERS_COUNT);
@@ -235,8 +238,8 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     cudaMemcpyToSymbol(Kernels::Constants::hierarchySteps, hierarchySteps, HIERARCHY_DIVISIONS * sizeof(float));
     cudaMemcpyToSymbol(Kernels::Constants::hierarchySamplings, hierarchySamplings, HIERARCHY_DIVISIONS * sizeof(int));
   
-    float2 pixelSize{params.blockSampling*(1.0f/resolution.x), params.blockSampling*(1.0f/resolution.y)}; 
-    std::vector<float2> blockOffsets{ {0.0f, 0.0f}, {-1.0f*pixelSize.x, 0.5f*pixelSize.y}, {0.5f*pixelSize.x, 1.0f*pixelSize.y}, {1.0f*pixelSize.x, -0.5f*pixelSize.y}, {-0.5f*pixelSize.x, -1.0f*pixelSize.y} };
+    float2 pixelSizeBlock{params.blockSampling*pixelSize.x, params.blockSampling*pixelSize.y}; 
+    std::vector<float2> blockOffsets{ {0.0f, 0.0f}, {-1.0f*pixelSizeBlock.x, 0.5f*pixelSizeBlock.y}, {0.5f*pixelSizeBlock.x, 1.0f*pixelSizeBlock.y}, {1.0f*pixelSizeBlock.x, -0.5f*pixelSizeBlock.y}, {-0.5f*pixelSizeBlock.x, -1.0f*pixelSizeBlock.y} };
     cudaMemcpyToSymbol(Kernels::Constants::blockOffsets, blockOffsets.data(), BLOCK_OFFSET_COUNT * sizeof(float2));
 }
 
@@ -342,8 +345,8 @@ ScanMetric Interpolator::InterpolationParams::parseMetric(std::string metric) co
         return ScanMetric::VARIANCE;
     else if(metric == "RANGE")
         return ScanMetric::RANGE;
-    else if(metric == "IQR")
-        return ScanMetric::IQR;
+    else if(metric == "ERANGE")
+        return ScanMetric::ELEMENT_RANGE;
     else if(metric == "MAD")
         return ScanMetric::MAD;
     std::cerr << "Scan metric set to default." << std::endl;

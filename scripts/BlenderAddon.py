@@ -249,6 +249,8 @@ class LFDepth(bpy.types.Operator):
         colorDepth = None
         colorMode = None
         world = None
+        engine = None
+        samples = 0
         
     backupData = BackupData()
     
@@ -260,7 +262,9 @@ class LFDepth(bpy.types.Operator):
         self.backupData.overrideMaterial = context.window.view_layer.material_override
         self.backupData.colorDepth = renderInfo.image_settings.color_depth
         self.backupData.colorMode = renderInfo.image_settings.color_mode  
-        self.backupData.world = bpy.context.scene.world      
+        self.backupData.world = bpy.context.scene.world    
+        self.backupData.engine = bpy.context.scene.render.engine
+        self.backupData.samples = bpy.context.scene.cycles.samples
         
     def popBackup(self, context):
         renderInfo = bpy.context.scene.render
@@ -271,6 +275,8 @@ class LFDepth(bpy.types.Operator):
         renderInfo.image_settings.color_depth = self.backupData.colorDepth
         renderInfo.image_settings.color_mode = self.backupData.colorMode
         bpy.context.scene.world = self.backupData.world
+        bpy.context.scene.render.engine = self.backupData.engine
+        bpy.context.scene.cycles.samples = self.backupData.samples
     
     def createWorld(self, context):
         materialName = "LFworldMaterial"
@@ -324,6 +330,8 @@ class LFDepth(bpy.types.Operator):
         return material
     
     def setRenderSettings(self, context):
+        bpy.context.scene.render.engine = 'CYCLES'
+        bpy.context.scene.cycles.samples = 16
         renderInfo = bpy.context.scene.render
         renderInfo.image_settings.file_format = "OPEN_EXR"
         renderInfo.image_settings.exr_codec = "ZIP"
@@ -389,6 +397,7 @@ class LFAnalyze(bpy.types.Operator):
         fx=math.tan(camera.angle_x/2)
         fy=math.tan(camera.angle_y/2)
         x = 2*d*(fy-fx)+o
+        print(camera.angle_x)
         return (o, x)
     
     def execute(self, context):
