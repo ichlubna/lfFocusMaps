@@ -31,7 +31,7 @@ class LFPanel(bpy.types.Panel):
         col.prop(context.scene, "LFAnalysis")
         if context.scene.LFAnalysis:
             col.prop(context.scene, "LFObjectOfInterest")  
-            col.prop(context.scene, "LFAnalysisStep")
+            col.prop(context.scene, "LFAnalysisOverlap")
             col.row().operator("lf.depth", text="Average depth")
             if context.scene.LFObjectOfInterest == None:
                 col.row().label(text="Select an object")
@@ -64,16 +64,13 @@ class CameraTrajectory():
               
         def offsetPosition(self, step, coords, size):   
             centering = copy.deepcopy(coords)
-            centering.x /= size.x-1
-            centering.y /= size.y-1
-            centering.x -= 0.5
-            centering.y -= 0.5
-            centering *= 2
+            centering.x -= (size.x-1)/2.0
+            centering.y -= (size.y-1)/2.0
             newPosition = copy.deepcopy(self.position)
             newPosition += self.down*step.y*centering.y
             newPosition += self.right*step.x*centering.x
             return newPosition
-    
+        
     def initCameraVectors(self, context):
         self.cameraVectors = self.getCameraVectors(context)     
     
@@ -393,12 +390,15 @@ class LFAnalyze(bpy.types.Operator):
     def getOffset(self, context):
         camera = context.scene.camera.data
         d = self.distanceToObject(context)
-        o = context.scene.LFAnalysisStep
-        fx=math.tan(camera.angle_x/2)
-        fy=math.tan(camera.angle_y/2)
-        x = 2*d*(fy-fx)+o
-        print(camera.angle_x)
-        return (o, x)
+        o = context.scene.LFAnalysisOverlap
+        fx=math.tan(camera.angle/2)
+        renderInfo = bpy.context.scene.render
+        aspect = renderInfo.resolution_x/renderInfo.resolution_y        
+        fy=fx/aspect
+    
+        x = 2*d*fx-o
+        y = 2*d*fy-o
+        return (x, y)
     
     def execute(self, context):
         context.scene.LFStep = self.getOffset(context)
@@ -457,7 +457,7 @@ def register():
     bpy.types.Scene.LFGridSize = bpy.props.IntVectorProperty(name="Grid size", size=2, description="The total number of the views", min=2, default=(8,8), subtype="XYZ")
     bpy.types.Scene.LFAnimation = bpy.props.BoolProperty(name="Render animation", description="Will render all active frames as animation", default=False)
     bpy.types.Scene.LFAnalysis = bpy.props.BoolProperty(name="Recalculate offset", description="Calculates the vertical camera spacing optimally", default=False)
-    bpy.types.Scene.LFAnalysisStep = bpy.props.FloatProperty(name="Step", description="The horizontal distance between cameras", min=0, default=1.0)
+    bpy.types.Scene.LFAnalysisOverlap = bpy.props.FloatProperty(name="Overlap", description="The amount of overlap between the cameras in both directions", min=0, default=0.1)
     bpy.types.Scene.LFProgress = bpy.props.FloatProperty(name="Progress", description="Progress bar", subtype="PERCENTAGE",soft_min=0, soft_max=100, default=0.0)
     bpy.types.Scene.LFCurrentView = bpy.props.IntVectorProperty(name="Current view", size=3, description="The currenty processed view - XY and third is linear ID", default=(0,0,0))
     bpy.types.Scene.LFCurrentTaskFinished = bpy.props.BoolProperty(name="Current view finished", description="Indicates that the current view was processed", default=True)
