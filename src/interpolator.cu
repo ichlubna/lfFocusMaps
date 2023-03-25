@@ -173,9 +173,12 @@ void Interpolator::loadGPUData()
         mipTextureObjectsArr = textureObjectsArr;
  
     std::vector<cudaSurfaceObject_t> surfaces;
-    for(int i=0; i<OUTPUT_SURFACE_COUNT; i++)
+    for(int i=0; i<FileNames::OUTPUT_COUNT; i++)
     {
-        auto surface = createSurfaceObject(resolution);
+        auto surfaceRes = resolution;
+        if(i == FileNames::FOCUS_MAP || i == FileNames::FOCUS_MAP_POST)
+            surfaceRes.z = 1;
+        auto surface = createSurfaceObject(surfaceRes);
         surfaces.push_back(surface.first);  
         surfaceOutputArrays.push_back(surface.second);
     }
@@ -193,11 +196,11 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     intValues[IntConstantIDs::ROWS] = colsRows.y;
     intValues[IntConstantIDs::DISTANCE_ORDER] = params.distanceOrder;
     intValues[IntConstantIDs::SCAN_METRIC] = params.metric;
+    intValues[IntConstantIDs::MAP_FILTER] = params.mapFilter;
     intValues[IntConstantIDs::FOCUS_METHOD] = params.method;
     intValues[IntConstantIDs::CLOSEST_VIEWS] = params.closestViews;
     intValues[IntConstantIDs::BLOCK_SAMPLING] = (params.blockSampling > 0.000000001);
     intValues[IntConstantIDs::YUV_DISTANCE] = params.colorDistance;
-    intValues[IntConstantIDs::NO_MAP] = params.noMap;
     intValues[IntConstantIDs::CLOCK_SEED] = std::clock();
     intValues[IntConstantIDs::BLEND_ADDRESS_MODE] = addressMode;
     cudaMemcpyToSymbol(Kernels::Constants::intConstants, intValues.data(), intValues.size() * sizeof(int));
@@ -211,6 +214,9 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     floatValues[FloatConstantIDs::PYRAMID_BROAD_STEP] = pyramidBroadStep; 
     floatValues[FloatConstantIDs::PYRAMID_NARROW_STEP] = pyramidBroadStep/PYRAMID_DIVISIONS_NARROW; 
     floatValues[FloatConstantIDs::SCAN_RANGE] = range;
+    floatValues[FloatConstantIDs::DOF_DISTANCE] = params.dofDistWidthMax.x;
+    floatValues[FloatConstantIDs::DOF_WIDTH] = params.dofDistWidthMax.y;
+    floatValues[FloatConstantIDs::DOF_MAX] = params.dofDistWidthMax.z;
     floatValues[FloatConstantIDs::FOCUS_METHOD_PARAMETER] = params.methodParameter;
     float2 pixelSize{1.0f/resolution.x, 1.0f/resolution.y}; 
     floatValues[FloatConstantIDs::PX_SIZE_X] = pixelSize.x;
@@ -294,6 +300,8 @@ void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
 
 glm::vec3 Interpolator::InterpolationParams::parseCoordinates(std::string coordinates) const
 {
+    if(coordinates == "")
+        return {-1,-1,-1};
     constexpr char delim{'_'};
     glm::vec3 numbers;
     std::stringstream ss(coordinates); 
@@ -339,6 +347,16 @@ void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
      
     cudaMemcpyToSymbol(Kernels::Constants::closestCoords, closestFramesCoordsLinear.data(), closestFramesCoordsLinear.size() * sizeof(int));
     cudaMemcpyToSymbol(Kernels::Constants::closestWeights, closestFramesWeights.data(), closestFramesWeights.size() * sizeof(float));    
+}
+
+MapFilter Interpolator::InterpolationParams::parseMapFilter(std::string filter) const
+{
+    if(filter == "NONE")
+        return MapFilter::NONE;
+    if(filter == "MED")
+        return MapFilter::MEDIAN;
+    std::cerr << "Focus map filter set to default." << std::endl;
+    return MapFilter::NONE;
 }
 
 ColorDistance Interpolator::InterpolationParams::parseColorDistance(std::string distance) const
@@ -435,10 +453,10 @@ void Interpolator::runKernel(KernelType type, KernelParams params)
         }
         break;
         
-        case DOF:
+        case POST:
         {
             dim3 dimGrid(glm::ceil(static_cast<float>(resolution.x)/dimBlock.x), glm::ceil(static_cast<float>(resolution.y)/dimBlock.y), 1);
-            Kernels::PostProcess::DoF<<<dimGrid, dimBlock, sharedSize>>>(params.dofParams.distance, params.dofParams.width, params.dofParams.max, params.dofParams.in);
+            Kernels::PostProcess::apply<<<dimGrid, dimBlock, sharedSize>>>();
         }
         break;
     }
@@ -458,50 +476,49 @@ void Interpolator::interpolate(InterpolationParams params)
     {
         Timer timer;
         runKernel(PROCESS);
+        std::cerr << cudaPeekAtLastError();
         auto time = timer.stop();
         avgTime += time;
         std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
     }
     std::cout << "Average of " << params.runs << " runs: " << avgTime/params.runs << " ms" << std::endl;
 
-    if(params.dofDistWidthMax.z > 0.0000001)
-        dof(params.dofDistWidthMax.x, params.dofDistWidthMax.y, params.dofDistWidthMax.z);
+    Timer timer;
+    postProcess();
+    auto time = timer.stop();
+    std::cout << "Post processing time: " << time << " ms" << std::endl;
 
-    storeResults(params.outputPath, params.noMap);
+    storeResults(params.outputPath);
 }
 
-void Interpolator::dof(float distance, float width, float maxBlur)
+void Interpolator::postProcess()
 {
-    auto tmpSurface = createSurfaceObject(resolution, reinterpret_cast<uint8_t*>(surfaceOutputArrays[FileNames::RENDER_IMAGE]), true);
-    KernelParams params;
-    params.dofParams = {distance, width, maxBlur, tmpSurface.first};
-    runKernel(DOF, params);
+    runKernel(POST);
     cudaDeviceSynchronize();
 }
 
-void Interpolator::storeResults(std::string path, bool noMap)
+void Interpolator::storeResults(std::string path)
 {
     std::cout << "Storing results..." << std::endl;
-    int count = OUTPUT_SURFACE_COUNT;
-    if(noMap)
-        count--;
-    LoadingBar bar(count);
+    LoadingBar bar(FileNames::OUTPUT_COUNT);
     std::vector<uint8_t> data(resolution.x*resolution.y*resolution.z, 255);
 
     size_t pitch = resolution.x*resolution.z;
     void *imageData;
     cudaMalloc(&imageData, resolution.x*resolution.y*resolution.z);
 
-    for(int i=0; i<OUTPUT_SURFACE_COUNT; i++) 
-        if(!noMap ||  i != FileNames::FOCUS_MAP)
-        {
-            cudaMemcpy2DFromArray(imageData, pitch, reinterpret_cast<cudaArray*>(surfaceOutputArrays[i]), 0, 0, pitch, resolution.y, cudaMemcpyDeviceToDevice);
-            if(i != FileNames::FOCUS_MAP && useYUV)
-                runKernel(ARR_YUV_RGB, {imageData, resolution.x, resolution.y});
+    for(int i=0; i<FileNames::OUTPUT_COUNT; i++) 
+    {
+        cudaMemcpy2DFromArray(imageData, pitch, reinterpret_cast<cudaArray*>(surfaceOutputArrays[i]), 0, 0, pitch, resolution.y, cudaMemcpyDeviceToDevice);
+        if(i != FileNames::FOCUS_MAP && i != FileNames::FOCUS_MAP_POST && useYUV)
+            runKernel(ARR_YUV_RGB, {imageData, resolution.x, resolution.y});
 
-            cudaMemcpy2D(data.data(), pitch, imageData, pitch, pitch, resolution.y, cudaMemcpyDeviceToHost);
+        cudaMemcpy2D(data.data(), pitch, imageData, pitch, pitch, resolution.y, cudaMemcpyDeviceToHost);
+        if(i == FileNames::FOCUS_MAP && i == FileNames::FOCUS_MAP_POST)
             stbi_write_png((std::filesystem::path(path)/(fileNames[i]+".png")).c_str(), resolution.x, resolution.y, resolution.z, data.data(), resolution.x*resolution.z);
-            bar.add();
-        }
+        else
+            stbi_write_png((std::filesystem::path(path)/(fileNames[i]+".png")).c_str(), resolution.x, resolution.y, resolution.z, data.data(), resolution.x*resolution.z);
+        bar.add();
+    }
     cudaFree(imageData);
 }

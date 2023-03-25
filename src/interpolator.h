@@ -33,6 +33,12 @@ class Interpolator
             method = parseMethod(inputMethod);
             return this;
         }
+        
+        InterpolationParams* setMapFilter(std::string filter)
+        {
+            mapFilter = parseMapFilter(filter);
+            return this;
+        }
          
         InterpolationParams* setMetric(std::string inputMetric)
         {
@@ -66,13 +72,7 @@ class Interpolator
             blockSampling = block;
             return this;
         }
-        
-        InterpolationParams* setNoMap(bool no=true)
-        {
-            noMap = no;
-            return this;
-        }
-        
+         
         InterpolationParams* setColorDistance(std::string distance)
         {
             colorDistance = parseColorDistance(distance);
@@ -119,9 +119,9 @@ class Interpolator
         float methodParameter;
         bool closestViews{false};
         float blockSampling{0};
-        bool noMap{false};
         glm::vec3 dofDistWidthMax{0,0,0};
         ColorDistance colorDistance;
+        MapFilter mapFilter;
         float scanRange;
         int distanceOrder{1};
         int runs{1};
@@ -131,6 +131,7 @@ class Interpolator
         FocusMethod parseMethod(std::string inputMethod) const;
         ScanMetric parseMetric(std::string inputMetric) const;
         ColorDistance parseColorDistance(std::string distance) const;
+        MapFilter parseMapFilter(std::string filter) const;
     };
 
     Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv, bool useAspect);
@@ -144,26 +145,16 @@ class Interpolator
         glm::ivec2 colsRows;
         glm::ivec3 resolution;
     };
-    enum KernelType{PROCESS, ARR_RGB_YUV, ARR_YUV_RGB, DOF};
+    enum KernelType{PROCESS, ARR_RGB_YUV, ARR_YUV_RGB, POST};
     class KernelParams
     {
         public:
         void *data;
         int width;
         int height;
-        class DofParams
-        {
-            public:
-            float distance;
-            float width;
-            float max;
-            int in;
-        };
-        DofParams dofParams;
     };
     void runKernel(KernelType, KernelParams={});
 
-    static constexpr int OUTPUT_SURFACE_COUNT{2};
     AddressMode addressMode{CLAMP};
     bool useSecondaryFolder{false};
     bool useMips{false};
@@ -175,7 +166,7 @@ class Interpolator
     void *textureObjectsArr;
     void *secondaryTextureObjectsArr;
     void *mipTextureObjectsArr;
-    const std::vector<std::string> fileNames{"focusMap", "renderImage"};
+    const std::vector<std::string> fileNames{"focusMap", "focusMapPost", "renderImage", "renderImagePost"};
     float *weightsGPU;
     size_t channels{4};
     size_t sharedSize{0};
@@ -189,11 +180,11 @@ class Interpolator
     void loadGPUConstants(InterpolationParams params);
     void loadGPUWeights(glm::vec2 viewCoordinates);
     int* loadImageToArray(const uint8_t *data, glm::ivec3 size, bool copyFromDevice);
-    void storeResults(std::string path, bool noMap);
+    void storeResults(std::string path);
     std::vector<float> generateWeights(glm::vec2 coords);
     std::pair<int, int*> createSurfaceObject(glm::ivec3 size, const uint8_t *data=nullptr, bool copyFromDevice=false);
     int createTextureObject(const uint8_t *data, glm::ivec3 size);
     void prepareClosestFrames(glm::vec2 viewCoordinates);
-    void dof(float distance, float width, float maxBlur);
+    void postProcess();
     AddressMode parseAddressMode(std::string addressMode) const;
 };

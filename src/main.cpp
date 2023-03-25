@@ -39,15 +39,17 @@ int main(int argc, char **argv)
                           "-d - order of the distance function, e.g., 2 => distance = distance^2, default is 1"
                           "-t - number of kernel runs for performance measurement - default is 1\n"
                           "-a - address mode - what to sample outside the images: WRAP, CLAMP, MIRROR, BORDER, BLEND, ALTER - default is CLAMP\n"
-                          "-n - will not store focus map (flag)\n"
                           "-g - use this if the input dataset was captured with the same spacing in horizontal and vertical axis\n"
                           "     if this option is not used, the lf grid spacing is expected to be in the same ratio as resolution (flag)\n"
-                          "-x - simulates depth of field: accepts value as focusDistance_width_maxBlur - same units as -r\n"
+                          "-x - simulates post-process depth of field: accepts value as focusDistance_width_maxBlur - same units as -r\n"
+                          "-t - focus map filter in post-process:\n"
+                          "     NONE (default)\n"
+                          "     MED - median\n"
                           "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;
-
+    
     if(!args["-i"] || !args["-c"] || !args["-o"] || !args["-m"])
     {
         std::cerr << "Missing required parameters. Use -h for help." << std::endl;
@@ -73,7 +75,7 @@ int main(int argc, char **argv)
         ->setBlockSampling(static_cast<float>(args["-b"]))
         ->setClosestViews(static_cast<bool>(args["-f"]))
         ->setColorDistance(static_cast<std::string>(args["-y"]))
-        ->setNoMap(static_cast<bool>(args["-n"]))
+        ->setMapFilter(static_cast<std::string>(args["-t"]))
         ->setDof(static_cast<std::string>(args["-x"]));
         interpolator.interpolate(params);
     }

@@ -22,12 +22,12 @@ namespace Kernels
         __device__ int gridSize(){return intConstants[IntConstantIDs::GRID_SIZE];}
         __device__ int distanceOrder(){return intConstants[IntConstantIDs::DISTANCE_ORDER];}
         __device__ ScanMetric scanMetric(){return static_cast<ScanMetric>(intConstants[IntConstantIDs::SCAN_METRIC]);}
+        __device__ MapFilter mapFilter(){return static_cast<MapFilter>(intConstants[IntConstantIDs::MAP_FILTER]);}
         __device__ FocusMethod focusMethod(){return static_cast<FocusMethod>(intConstants[IntConstantIDs::FOCUS_METHOD]);}
         __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
         __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
         __device__ ColorDistance YUVDistance(){return static_cast<ColorDistance>(intConstants[IntConstantIDs::YUV_DISTANCE]);}
         __device__ int addressMode(){return intConstants[IntConstantIDs::BLEND_ADDRESS_MODE];}
-        __device__ bool noMap(){return intConstants[IntConstantIDs::NO_MAP];}
         __device__ int ClockSeed(){return intConstants[IntConstantIDs::CLOCK_SEED];}
         
         __constant__ void* dataPointers[DataPointersIDs::POINTERS_COUNT];
@@ -55,6 +55,10 @@ namespace Kernels
         __device__ float pyramidBroadStep(){return floatConstants[FloatConstantIDs::PYRAMID_BROAD_STEP];}
         __device__ float pyramidNarrowStep(){return floatConstants[FloatConstantIDs::PYRAMID_NARROW_STEP];}
         __device__ float focusMethodParameter(){return floatConstants[FloatConstantIDs::FOCUS_METHOD_PARAMETER];}
+        __device__ float dofDistance(){return floatConstants[FloatConstantIDs::DOF_DISTANCE];}
+        __device__ float dofWidth(){return floatConstants[FloatConstantIDs::DOF_WIDTH];}
+        __device__ float dofMax(){return floatConstants[FloatConstantIDs::DOF_MAX];}
+        __device__ float3 dofDistanceWidthMax(){return {dofDistance(), dofWidth(), dofMax()};}
         __device__ float2 pixelSize(){return {floatConstants[FloatConstantIDs::PX_SIZE_X], floatConstants[FloatConstantIDs::PX_SIZE_Y]};}
 
         __device__ constexpr int MAX_IMAGES{256};
@@ -193,6 +197,16 @@ namespace Kernels
         __device__ void store(uchar4 px, int imageID, int2 coords)
         {
             surf2Dwrite<uchar4>(px, Constants::surfaces()[imageID], coords.x*sizeof(uchar4), coords.y);
+        }
+
+        __device__ PixelArray postLoad(int surfaceID, int2 coords)
+        {
+            return PixelArray{surf2Dread<uchar4>(Constants::surfaces()[surfaceID], coords.x * 4, coords.y, cudaBoundaryModeClamp)}; 
+        }
+        
+        __device__ float postLoadDepth(int surfaceID, int2 coords)
+        {
+            return static_cast<float>(surf2Dread<uchar4>(Constants::surfaces()[surfaceID], coords.x * 4, coords.y, cudaBoundaryModeClamp).x)/UCHAR_MAX; 
         }
 
         __device__ PixelArray load(int imageID, float2 coords)
@@ -770,43 +784,56 @@ namespace Kernels
         else
             color = FocusLevel::render<true>(coords, focus);
         
-        if(!Constants::noMap())
-        {
-            unsigned char focusColor = (focus/Constants::scanRange())*UCHAR_MAX;
-            Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, threadCoords);
-        }
+        unsigned char focusColor = (focus/Constants::scanRange())*UCHAR_MAX;
+        Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, threadCoords);
         Pixel::store(color, FileNames::RENDER_IMAGE, threadCoords);
     }
 
     namespace PostProcess
     {
-        __global__ void DoF(float distance, float width, float maxBlur, cudaSurfaceObject_t input)
+        __global__ void apply()
         {
             int2 coords = getImgCoords();
             if(coordsOutside(coords, Constants::imgRes()))
                 return;
             
-            uchar4 depthPx = surf2Dread<uchar4>(Constants::surfaces()[FileNames::FOCUS_MAP], coords.x * 4, coords.y); 
-            float depth = (static_cast<float>(depthPx.x)/UCHAR_MAX)*Constants::scanRange();
-            
-            
-            float normalizedDistance = (fmaxf(fabsf(depth-distance)-width, 0)/Constants::scanRange()); 
-            const int maxKernel{__float2int_rn(Constants::imgRes().x*maxBlur)};
-            int kernelSize{__float2int_rn(maxKernel*normalizedDistance)};
-            if(kernelSize%2 == 0)
-                kernelSize++;
-            int halfKernelSize{kernelSize/2};
-            float weight{1.0f/(kernelSize*kernelSize)};
             PixelArray pixel;
+            float depth{0};
+            float3 dofDistWidthMax = Constants::dofDistanceWidthMax();
 
-            for(int x=-halfKernelSize; x<=halfKernelSize; x++)
-                for(int y=-halfKernelSize; y<=halfKernelSize; y++)
-                {
-                    int2 sampleCoords{coords.x+x, coords.y+y}; 
-                    PixelArray px{surf2Dread<uchar4>(input, (sampleCoords.x) * 4, sampleCoords.y, cudaBoundaryModeClamp)}; 
-                    pixel.addWeighted(weight, px);
-                }
-            Pixel::store(pixel.uch4Raw(), FileNames::RENDER_IMAGE, coords);
+            switch(Constants::mapFilter())
+            {
+                case NONE:
+                    depth = Pixel::postLoadDepth(FileNames::FOCUS_MAP, coords); 
+                break;
+                
+                case MEDIAN:
+                    depth = Pixel::postLoadDepth(FileNames::FOCUS_MAP, coords); 
+                break;
+            }
+             
+            if(dofDistWidthMax.y > 0)
+            { 
+                depth *= Constants::scanRange();                 
+                float normalizedDistance = fmaxf(fabsf(depth-dofDistWidthMax.x)-dofDistWidthMax.y, 0)/Constants::scanRange(); 
+                const int maxKernel{__float2int_rn(Constants::imgRes().x*dofDistWidthMax.z)};
+                int kernelSize{__float2int_rn(maxKernel*normalizedDistance)};
+                if(kernelSize%2 == 0)
+                    kernelSize++;
+                int halfKernelSize{kernelSize/2};
+                float weight{1.0f/(kernelSize*kernelSize)};
+
+                for(int x=-halfKernelSize; x<=halfKernelSize; x++)
+                    for(int y=-halfKernelSize; y<=halfKernelSize; y++)
+                    {
+                        int2 sampleCoords{coords.x+x, coords.y+y}; 
+                        auto px = Pixel::postLoad(FileNames::RENDER_IMAGE, sampleCoords); 
+                        pixel.addWeighted(weight, px);
+                    }
+            }
+
+            Pixel::store(pixel.uch4Raw(), FileNames::RENDER_IMAGE_POST, coords);
+            Pixel::store(pixel.uch4Raw(), FileNames::FOCUS_MAP_POST, coords);
         }
     }
 
