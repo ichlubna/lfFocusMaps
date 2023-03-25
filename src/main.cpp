@@ -5,7 +5,6 @@ int main(int argc, char **argv)
 {
     Arguments args(argc, argv);
     std::string helpText{ "Usage:\n"
-                          "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
                           "-i - folder with lf grid images - named as column_row.extension, e.g.: 01_12.jpg\n"
                           "-l - uses secondary folder with same filenames for focusing, e.g.: -i my/folder => my contains folder and folder_sec (flag) \n"
                           "-c - camera position in normalized coordinates of the grid in format: x_y, e.g., 0.5_0.1\n"
@@ -43,6 +42,8 @@ int main(int argc, char **argv)
                           "-n - will not store focus map (flag)\n"
                           "-g - use this if the input dataset was captured with the same spacing in horizontal and vertical axis\n"
                           "     if this option is not used, the lf grid spacing is expected to be in the same ratio as resolution (flag)\n"
+                          "-x - simulates depth of field: accepts value as focusDistance_width_maxBlur - same units as -r\n"
+                          "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;
@@ -72,7 +73,8 @@ int main(int argc, char **argv)
         ->setBlockSampling(static_cast<float>(args["-b"]))
         ->setClosestViews(static_cast<bool>(args["-f"]))
         ->setColorDistance(static_cast<std::string>(args["-y"]))
-        ->setNoMap(static_cast<bool>(args["-n"]));
+        ->setNoMap(static_cast<bool>(args["-n"]))
+        ->setDof(static_cast<std::string>(args["-x"]));
         interpolator.interpolate(params);
     }
     catch(const std::exception &e)

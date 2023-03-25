@@ -1,3 +1,4 @@
+#include <stdexcept>
 #define GLM_FORCE_SWIZZLE
 #include <sstream>
 #include <cuda_runtime.h>
@@ -101,9 +102,9 @@ int Interpolator::createTextureObject(const uint8_t *data, glm::ivec3 size)
     return texObj;
 }
 
-std::pair<int, int*> Interpolator::createSurfaceObject(glm::ivec3 size, const uint8_t *data)
+std::pair<int, int*> Interpolator::createSurfaceObject(glm::ivec3 size, const uint8_t *data, bool copyFromDevice)
 {
-    auto arr = loadImageToArray(data, size);
+    auto arr = loadImageToArray(data, size, copyFromDevice);
     cudaResourceDesc surfRes;
     memset(&surfRes, 0, sizeof(cudaResourceDesc));
     surfRes.resType = cudaResourceTypeArray;
@@ -113,13 +114,18 @@ std::pair<int, int*> Interpolator::createSurfaceObject(glm::ivec3 size, const ui
     return {surfObj, arr};
 }
 
-int* Interpolator::loadImageToArray(const uint8_t *data, glm::ivec3 size)
+int* Interpolator::loadImageToArray(const uint8_t *data, glm::ivec3 size, bool copyFromDevice)
 {
     cudaChannelFormatDesc channels = cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned); 
     cudaArray *arr;
     cudaMallocArray(&arr, &channels, size.x, size.y, cudaArraySurfaceLoadStore);
     if(data != nullptr)
-        cudaMemcpy2DToArray(arr, 0, 0, data, size.x*size.z, size.x*size.z, size.y, cudaMemcpyHostToDevice);
+    {
+        if(copyFromDevice)
+            cudaMemcpy2DArrayToArray(arr, 0, 0, reinterpret_cast<cudaArray_const_t>(data), 0, 0, size.x*size.z, size.y, cudaMemcpyDeviceToDevice); 
+        else
+            cudaMemcpy2DToArray(arr, 0, 0, data, size.x*size.z, size.x*size.z, size.y, cudaMemcpyHostToDevice);
+    }
     return reinterpret_cast<int*>(arr);
 }
 
@@ -247,15 +253,19 @@ void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
 {
     float aspect = static_cast<float>(resolution.x)/resolution.y;
     std::vector<float2> offsets(colsRows.x*colsRows.y);
-    for(int col=0; col<colsRows.x; col++)
-        for(int row=0; row<colsRows.y; row++)
+    int gridID = 0; 
+    for(int row=0; row<colsRows.y; row++) 
+    {     
+        gridID = row*colsRows.x;
+        for(int col=0; col<colsRows.x; col++) 
         {
-            int gridID = row*colsRows.x + col; 
             float2 offset{(viewCoordinates.x-col)/colsRows.x, (viewCoordinates.y-row)/colsRows.y};
             if(useAspect)
                 offset.y *= aspect;
             offsets[gridID] = offset;
+            gridID++;
         }
+    }
     cudaMemcpyToSymbol(Kernels::Constants::offsets, offsets.data(), offsets.size() * sizeof(float2));
 }
 
@@ -264,8 +274,8 @@ std::vector<float> Interpolator::generateWeights(glm::vec2 coords)
     auto maxDistance = glm::distance(glm::vec2(0,0), glm::vec2(colsRows));
     float weightSum{0};
     std::vector<float> weightVals;
-    for(int col=0; col<colsRows.x; col++)
-        for(int row=0; row<colsRows.y; row++)
+    for(int row=0; row<colsRows.y; row++) 
+        for(int col=0; col<colsRows.x; col++) 
         {
             float weight = maxDistance - glm::distance(coords, glm::vec2(col, row));
             weightSum += weight;
@@ -282,16 +292,22 @@ void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
     cudaMemcpyToSymbol(Kernels::Constants::weights, weights.data(), weights.size() * sizeof(float));
 }
 
-glm::vec2 Interpolator::InterpolationParams::parseCoordinates(std::string coordinates) const
+glm::vec3 Interpolator::InterpolationParams::parseCoordinates(std::string coordinates) const
 {
     constexpr char delim{'_'};
-    std::vector <float> numbers;
+    glm::vec3 numbers;
     std::stringstream ss(coordinates); 
     std::string value; 
+    int i{0};
     while(getline(ss, value, delim))
-        numbers.push_back(std::stof(value));
+    {
+        if(i>3)
+            throw std::runtime_error("Coordinates too long!");
+        numbers[i] = std::stof(value);
+        i++;
+    }
 
-    return {numbers[0], numbers[1]};
+    return numbers;
 }
 
 void Interpolator::prepareClosestFrames(glm::vec2 viewCoordinates)
@@ -413,8 +429,17 @@ void Interpolator::runKernel(KernelType type, KernelParams params)
         break;
 
         case ARR_YUV_RGB:
+        {
             dim3 dimGrid(glm::ceil(static_cast<float>(params.width)/dimBlock.x), glm::ceil(static_cast<float>(params.height)/dimBlock.y), 1);
             Kernels::Conversion::YUVtoRGB<<<dimGrid, dimBlock, sharedSize>>>(params.data, params.width, params.height);
+        }
+        break;
+        
+        case DOF:
+        {
+            dim3 dimGrid(glm::ceil(static_cast<float>(resolution.x)/dimBlock.x), glm::ceil(static_cast<float>(resolution.y)/dimBlock.y), 1);
+            Kernels::PostProcess::DoF<<<dimGrid, dimBlock, sharedSize>>>(params.dofParams.distance, params.dofParams.width, params.dofParams.max, params.dofParams.in);
+        }
         break;
     }
 }
@@ -426,7 +451,6 @@ void Interpolator::interpolate(InterpolationParams params)
     prepareClosestFrames(coords);
     loadGPUOffsets(coords);   
     loadGPUConstants(params);
-    
 
     std::cout << "Elapsed time: "<<std::endl;
     float avgTime{0};
@@ -439,7 +463,20 @@ void Interpolator::interpolate(InterpolationParams params)
         std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
     }
     std::cout << "Average of " << params.runs << " runs: " << avgTime/params.runs << " ms" << std::endl;
+
+    if(params.dofDistWidthMax.z > 0.0000001)
+        dof(params.dofDistWidthMax.x, params.dofDistWidthMax.y, params.dofDistWidthMax.z);
+
     storeResults(params.outputPath, params.noMap);
+}
+
+void Interpolator::dof(float distance, float width, float maxBlur)
+{
+    auto tmpSurface = createSurfaceObject(resolution, reinterpret_cast<uint8_t*>(surfaceOutputArrays[FileNames::RENDER_IMAGE]), true);
+    KernelParams params;
+    params.dofParams = {distance, width, maxBlur, tmpSurface.first};
+    runKernel(DOF, params);
+    cudaDeviceSynchronize();
 }
 
 void Interpolator::storeResults(std::string path, bool noMap)

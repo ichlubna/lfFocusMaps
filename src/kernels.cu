@@ -76,6 +76,7 @@ namespace Kernels
             static constexpr int CHANNEL_COUNT{3};
             __device__ PixelArray(){};
             __device__ PixelArray(float4 pixel) : channels{pixel.x, pixel.y, pixel.z}{};
+            __device__ PixelArray(uchar4 pixel) : channels{static_cast<float>(pixel.x), static_cast<float>(pixel.y), static_cast<float>(pixel.z)}{};
             float channels[CHANNEL_COUNT]{0,0,0};
             __device__ float& operator[](int index){return channels[index];}
           
@@ -86,6 +87,16 @@ namespace Kernels
                 auto data = reinterpret_cast<unsigned char*>(&result);
                 for(int i=0; i<CHANNEL_COUNT; i++)
                     data[i] = __float2int_rn(channels[i]*UCHAR_MAX);
+                return result;
+            }
+            
+            __device__ uchar4 uch4Raw() 
+            {
+                uchar4 result;
+                result.w = 255;
+                auto data = reinterpret_cast<unsigned char*>(&result);
+                for(int i=0; i<CHANNEL_COUNT; i++)
+                    data[i] = __float2int_rn(channels[i]);
                 return result;
             }
            
@@ -311,8 +322,7 @@ namespace Kernels
             {
               add(rhs);
               return *this;
-            }
-            
+            }          
         };
  
         class Mad
@@ -712,10 +722,6 @@ namespace Kernels
         float2 coords = {static_cast<float>(threadCoords.x)/Constants::imgRes().x,
                         static_cast<float>(threadCoords.y)/Constants::imgRes().y};
 
-        //MemoryPartitioner<half> memoryPartitioner(localMemory);
-        //auto localWeights = memoryPartitioner.array(gridSize());
-        //loadWeightsSync<half>(weights, localWeights.data, gridSize()/2);
-
         float focus{0};
         Constants::setSecondaryTextures();
         switch(Constants::focusMethod())
@@ -758,17 +764,50 @@ namespace Kernels
 
         Constants::setNormalTextures(); 
         uchar4 color{0};
-        if(Constants::closestViews())
-            color = FocusLevel::render<true>(coords, focus);
-        else
+        
+        if(Constants::focusMethod() == ONE_DISTANCE)
             color = FocusLevel::render(coords, focus);
-
+        else
+            color = FocusLevel::render<true>(coords, focus);
+        
         if(!Constants::noMap())
         {
             unsigned char focusColor = (focus/Constants::scanRange())*UCHAR_MAX;
             Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, threadCoords);
         }
         Pixel::store(color, FileNames::RENDER_IMAGE, threadCoords);
+    }
+
+    namespace PostProcess
+    {
+        __global__ void DoF(float distance, float width, float maxBlur, cudaSurfaceObject_t input)
+        {
+            int2 coords = getImgCoords();
+            if(coordsOutside(coords, Constants::imgRes()))
+                return;
+            
+            uchar4 depthPx = surf2Dread<uchar4>(Constants::surfaces()[FileNames::FOCUS_MAP], coords.x * 4, coords.y); 
+            float depth = (static_cast<float>(depthPx.x)/UCHAR_MAX)*Constants::scanRange();
+            
+            
+            float normalizedDistance = (fmaxf(fabsf(depth-distance)-width, 0)/Constants::scanRange()); 
+            const int maxKernel{__float2int_rn(Constants::imgRes().x*maxBlur)};
+            int kernelSize{__float2int_rn(maxKernel*normalizedDistance)};
+            if(kernelSize%2 == 0)
+                kernelSize++;
+            int halfKernelSize{kernelSize/2};
+            float weight{1.0f/(kernelSize*kernelSize)};
+            PixelArray pixel;
+
+            for(int x=-halfKernelSize; x<=halfKernelSize; x++)
+                for(int y=-halfKernelSize; y<=halfKernelSize; y++)
+                {
+                    int2 sampleCoords{coords.x+x, coords.y+y}; 
+                    PixelArray px{surf2Dread<uchar4>(input, (sampleCoords.x) * 4, sampleCoords.y, cudaBoundaryModeClamp)}; 
+                    pixel.addWeighted(weight, px);
+                }
+            Pixel::store(pixel.uch4Raw(), FileNames::RENDER_IMAGE, coords);
+        }
     }
 
     namespace Conversion

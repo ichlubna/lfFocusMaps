@@ -15,9 +15,16 @@ class Interpolator
             outputPath = path; 
             return this;
         }
+
         InterpolationParams* setCoordinates(std::string inputCoordinates)
         {
             coordinates = parseCoordinates(inputCoordinates); 
+            return this;
+        }
+        
+        InterpolationParams* setDof(std::string distWidth)
+        {
+            dofDistWidthMax = parseCoordinates(distWidth); 
             return this;
         }
         
@@ -113,13 +120,14 @@ class Interpolator
         bool closestViews{false};
         float blockSampling{0};
         bool noMap{false};
+        glm::vec3 dofDistWidthMax{0,0,0};
         ColorDistance colorDistance;
         float scanRange;
         int distanceOrder{1};
         int runs{1};
         
         private:
-        glm::vec2 parseCoordinates(std::string coordinates) const;
+        glm::vec3 parseCoordinates(std::string coordinates) const;
         FocusMethod parseMethod(std::string inputMethod) const;
         ScanMetric parseMetric(std::string inputMetric) const;
         ColorDistance parseColorDistance(std::string distance) const;
@@ -136,13 +144,22 @@ class Interpolator
         glm::ivec2 colsRows;
         glm::ivec3 resolution;
     };
-    enum KernelType{PROCESS, ARR_RGB_YUV, ARR_YUV_RGB};
+    enum KernelType{PROCESS, ARR_RGB_YUV, ARR_YUV_RGB, DOF};
     class KernelParams
     {
         public:
         void *data;
         int width;
         int height;
+        class DofParams
+        {
+            public:
+            float distance;
+            float width;
+            float max;
+            int in;
+        };
+        DofParams dofParams;
     };
     void runKernel(KernelType, KernelParams={});
 
@@ -171,11 +188,12 @@ class Interpolator
     TexturesInfo loadTextures(std::string input, void **textures);
     void loadGPUConstants(InterpolationParams params);
     void loadGPUWeights(glm::vec2 viewCoordinates);
-    int* loadImageToArray(const uint8_t *data, glm::ivec3 size);
+    int* loadImageToArray(const uint8_t *data, glm::ivec3 size, bool copyFromDevice);
     void storeResults(std::string path, bool noMap);
     std::vector<float> generateWeights(glm::vec2 coords);
-    std::pair<int, int*> createSurfaceObject(glm::ivec3 size, const uint8_t *data=nullptr);
+    std::pair<int, int*> createSurfaceObject(glm::ivec3 size, const uint8_t *data=nullptr, bool copyFromDevice=false);
     int createTextureObject(const uint8_t *data, glm::ivec3 size);
     void prepareClosestFrames(glm::vec2 viewCoordinates);
+    void dof(float distance, float width, float maxBlur);
     AddressMode parseAddressMode(std::string addressMode) const;
 };
