@@ -59,6 +59,10 @@ namespace Kernels
         __device__ float dofWidth(){return floatConstants[FloatConstantIDs::DOF_WIDTH];}
         __device__ float dofMax(){return floatConstants[FloatConstantIDs::DOF_MAX];}
         __device__ float3 dofDistanceWidthMax(){return {dofDistance(), dofWidth(), dofMax()};}
+        __device__ float mistStart(){return floatConstants[FloatConstantIDs::MIST_START];}
+        __device__ float mistEnd(){return floatConstants[FloatConstantIDs::MIST_END];}
+        __device__ float mistColor(){return floatConstants[FloatConstantIDs::MIST_COLOR];}
+        __device__ float3 mistStartEndCol(){return {mistStart(), mistEnd(), mistColor()};}
         __device__ float2 pixelSize(){return {floatConstants[FloatConstantIDs::PX_SIZE_X], floatConstants[FloatConstantIDs::PX_SIZE_Y]};}
 
         __device__ constexpr int MAX_IMAGES{256};
@@ -83,7 +87,12 @@ namespace Kernels
             __device__ PixelArray(uchar4 pixel) : channels{static_cast<float>(pixel.x), static_cast<float>(pixel.y), static_cast<float>(pixel.z)}{};
             float channels[CHANNEL_COUNT]{0,0,0};
             __device__ float& operator[](int index){return channels[index];}
-          
+         
+            __device__ void clear()
+            {
+                channels[0] = channels[1] = channels[2] = 0;
+            }
+ 
             __device__ uchar4 uch4() 
             {
                 uchar4 result;
@@ -100,9 +109,9 @@ namespace Kernels
                 result.w = 255;
                 auto data = reinterpret_cast<unsigned char*>(&result);
                 for(int i=0; i<CHANNEL_COUNT; i++)
-                    data[i] = __float2int_rn(channels[i]);
+                    data[i] = static_cast<unsigned char>(channels[i]);
                 return result;
-            }
+            }  
            
             __device__ void addWeighted(float weight, PixelArray &value) 
             {    
@@ -152,6 +161,12 @@ namespace Kernels
                     this->channels[j] *= value;
                 return *this;
             }
+
+            __device__ void mixInto(PixelArray &newPixel, float factor)
+            {
+                for(int j=0; j<CHANNEL_COUNT; j++)
+                    this->channels[j] = (1.0f-factor)*this->channels[j] + factor*newPixel.channels[j];
+            }
         };
 
     __device__ bool coordsOutside(int2 coords, int2 resolution)
@@ -165,6 +180,13 @@ namespace Kernels
         coords.x = (threadIdx.x + blockIdx.x * blockDim.x);
         coords.y = (threadIdx.y + blockIdx.y * blockDim.y);
         return coords;
+    }
+
+    __device__ float2 normalizeCoords(int2 coords)
+    {
+        auto res = Constants::imgRes();
+        return {static_cast<float>(coords.x)/res.x,
+                static_cast<float>(coords.y)/res.y};
     }
    
     namespace Pixel
@@ -198,15 +220,20 @@ namespace Kernels
         {
             surf2Dwrite<uchar4>(px, Constants::surfaces()[imageID], coords.x*sizeof(uchar4), coords.y);
         }
+        
+        __device__ void storeDepth(float px, int imageID, int2 coords)
+        {
+            surf2Dwrite<float>(px, Constants::surfaces()[imageID], coords.x*sizeof(float), coords.y);
+        }
 
         __device__ PixelArray postLoad(int surfaceID, int2 coords)
         {
             return PixelArray{surf2Dread<uchar4>(Constants::surfaces()[surfaceID], coords.x * 4, coords.y, cudaBoundaryModeClamp)}; 
         }
         
-        __device__ float postLoadDepth(int surfaceID, int2 coords)
+        __device__ float loadDepth(int surfaceID, int2 coords)
         {
-            return static_cast<float>(surf2Dread<uchar4>(Constants::surfaces()[surfaceID], coords.x * 4, coords.y, cudaBoundaryModeClamp).x)/UCHAR_MAX; 
+            return surf2Dread<float>(Constants::surfaces()[surfaceID], coords.x*sizeof(float), coords.y, cudaBoundaryModeClamp); 
         }
 
         __device__ PixelArray load(int imageID, float2 coords)
@@ -732,9 +759,7 @@ namespace Kernels
         int2 threadCoords = getImgCoords();
         if(coordsOutside(threadCoords, Constants::imgRes()))
             return;
- 
-        float2 coords = {static_cast<float>(threadCoords.x)/Constants::imgRes().x,
-                        static_cast<float>(threadCoords.y)/Constants::imgRes().y};
+        auto coords = normalizeCoords(threadCoords); 
 
         float focus{0};
         Constants::setSecondaryTextures();
@@ -784,37 +809,72 @@ namespace Kernels
         else
             color = FocusLevel::render<true>(coords, focus);
         
-        unsigned char focusColor = (focus/Constants::scanRange())*UCHAR_MAX;
-        Pixel::store(uchar4{focusColor, focusColor, focusColor, UCHAR_MAX}, FileNames::FOCUS_MAP, threadCoords);
+        Pixel::storeDepth(focus, FileNames::FOCUS_MAP, threadCoords);
         Pixel::store(color, FileNames::RENDER_IMAGE, threadCoords);
     }
 
     namespace PostProcess
     {
+        __device__ void bubbleSort(float arr[], int count)
+        {
+            int i, j;
+            for(i=0; i<count-1; i++)
+                for(j=0; j<count-i-1; j++)
+                    if(arr[j] > arr[j+1])
+                    {
+                        float tmp = arr[j];
+                        arr[j] = arr[j+1];
+                        arr[j+1] = tmp;
+                    }
+        }
+
+        __device__ float medianLoad(int2 coords)
+        {
+            constexpr int HALF_KERNEL_SIZE{1};
+            constexpr int KERNEL_SIZE{HALF_KERNEL_SIZE*2+1};
+            constexpr int MEDIAN_SIZE{KERNEL_SIZE*KERNEL_SIZE};
+            constexpr int MEDIAN_ID{MEDIAN_SIZE/2+1};
+            float values[MEDIAN_SIZE];
+
+            int i{0};
+            for(int x=-HALF_KERNEL_SIZE; x<=HALF_KERNEL_SIZE; x++)
+                for(int y=-HALF_KERNEL_SIZE; y<=HALF_KERNEL_SIZE; y++)
+                {
+                    int2 sampleCoords{coords.x+x, coords.y+y}; 
+                    values[i] = Pixel::loadDepth(FileNames::FOCUS_MAP, sampleCoords);
+                    i++;
+                } 
+            bubbleSort(values, MEDIAN_SIZE);
+            return values[MEDIAN_ID];
+        }
+ 
         __global__ void apply()
         {
             int2 coords = getImgCoords();
             if(coordsOutside(coords, Constants::imgRes()))
                 return;
             
-            PixelArray pixel;
             float depth{0};
-            float3 dofDistWidthMax = Constants::dofDistanceWidthMax();
 
             switch(Constants::mapFilter())
             {
                 case NONE:
-                    depth = Pixel::postLoadDepth(FileNames::FOCUS_MAP, coords); 
+                    depth = Pixel::loadDepth(FileNames::FOCUS_MAP, coords); 
                 break;
                 
                 case MEDIAN:
-                    depth = Pixel::postLoadDepth(FileNames::FOCUS_MAP, coords); 
+                    depth = medianLoad(coords); 
                 break;
-            }
+            }            
+            Pixel::storeDepth(depth, FileNames::FOCUS_MAP_POST, coords);
+
+            auto filterColor = FocusLevel::render<true>(normalizeCoords(coords), depth);
+            Pixel::store(filterColor, FileNames::RENDER_IMAGE_POST_MAP_FILTER, coords);
+            PixelArray pixel{filterColor};
              
+            float3 dofDistWidthMax = Constants::dofDistanceWidthMax();
             if(dofDistWidthMax.y > 0)
-            { 
-                depth *= Constants::scanRange();                 
+            {
                 float normalizedDistance = fmaxf(fabsf(depth-dofDistWidthMax.x)-dofDistWidthMax.y, 0)/Constants::scanRange(); 
                 const int maxKernel{__float2int_rn(Constants::imgRes().x*dofDistWidthMax.z)};
                 int kernelSize{__float2int_rn(maxKernel*normalizedDistance)};
@@ -822,18 +882,30 @@ namespace Kernels
                     kernelSize++;
                 int halfKernelSize{kernelSize/2};
                 float weight{1.0f/(kernelSize*kernelSize)};
+                pixel = pixel*weight;
 
                 for(int x=-halfKernelSize; x<=halfKernelSize; x++)
                     for(int y=-halfKernelSize; y<=halfKernelSize; y++)
                     {
+                        if(x == 0 && y == 0)
+                            continue;
                         int2 sampleCoords{coords.x+x, coords.y+y}; 
                         auto px = Pixel::postLoad(FileNames::RENDER_IMAGE, sampleCoords); 
                         pixel.addWeighted(weight, px);
                     }
             }
 
-            Pixel::store(pixel.uch4Raw(), FileNames::RENDER_IMAGE_POST, coords);
-            Pixel::store(pixel.uch4Raw(), FileNames::FOCUS_MAP_POST, coords);
+            float3 mistStartEndCol = Constants::mistStartEndCol();
+            if(mistStartEndCol.y > 0)
+            {
+                unsigned int colorVal =__float2uint_rn(mistStartEndCol.z);
+                uchar4 colorUch = *reinterpret_cast<uchar4*>(&colorVal);
+                PixelArray color{colorUch};
+                float factor = 1.0f-__saturatef((fminf(fmaxf(mistStartEndCol.x, depth),mistStartEndCol.y)-mistStartEndCol.x)/(mistStartEndCol.y-mistStartEndCol.x));
+                pixel.mixInto(color, factor);
+            }  
+            uchar4 px = pixel.uch4Raw();
+            Pixel::store(px, FileNames::RENDER_IMAGE_POST, coords);
         }
     }
 

@@ -41,11 +41,18 @@ int main(int argc, char **argv)
                           "-a - address mode - what to sample outside the images: WRAP, CLAMP, MIRROR, BORDER, BLEND, ALTER - default is CLAMP\n"
                           "-g - use this if the input dataset was captured with the same spacing in horizontal and vertical axis\n"
                           "     if this option is not used, the lf grid spacing is expected to be in the same ratio as resolution (flag)\n"
-                          "-x - simulates post-process depth of field: accepts value as focusDistance_width_maxBlur - same units as -r\n"
-                          "-t - focus map filter in post-process:\n"
+                          "-x - simulates post-process depth of field: accepts value focusDistance_width_maxBlur - same units as -r\n"
+                          "-w - simulates post-process mist: accepts value start_end_hexaColor(#BBGGRR) - first two (far start and near end) are same units as -r\n"
+                          "-z - focus map filter in post-process:\n"
                           "     NONE (default)\n"
                           "     MED - median\n"
                           "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
+                          "The output folder then contains:\n"
+                          "focusMap.hdr - the computed focus map in HDR format as 32bit float per pixel\n"
+                          "focusMapPost.hdr - the focus map used in the post processing (e.g. affected by -t)\n"
+                          "renderImage.png - the novel interpolated view at position defined by -c\n"
+                          "renderImagePost.png - the novel view with post-processing effects (e.g. -x or -n)\n"
+                          "renderImagePostFiltered.png - the novel view rendered with the filtered map defined by -t\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;
@@ -75,7 +82,8 @@ int main(int argc, char **argv)
         ->setBlockSampling(static_cast<float>(args["-b"]))
         ->setClosestViews(static_cast<bool>(args["-f"]))
         ->setColorDistance(static_cast<std::string>(args["-y"]))
-        ->setMapFilter(static_cast<std::string>(args["-t"]))
+        ->setMapFilter(static_cast<std::string>(args["-z"]))
+        ->setMist(static_cast<std::string>(args["-w"]))
         ->setDof(static_cast<std::string>(args["-x"]));
         interpolator.interpolate(params);
     }

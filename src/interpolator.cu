@@ -117,6 +117,8 @@ std::pair<int, int*> Interpolator::createSurfaceObject(glm::ivec3 size, const ui
 int* Interpolator::loadImageToArray(const uint8_t *data, glm::ivec3 size, bool copyFromDevice)
 {
     cudaChannelFormatDesc channels = cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned); 
+    if(size.z == 1)
+        channels = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindUnsigned); 
     cudaArray *arr;
     cudaMallocArray(&arr, &channels, size.x, size.y, cudaArraySurfaceLoadStore);
     if(data != nullptr)
@@ -217,6 +219,9 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     floatValues[FloatConstantIDs::DOF_DISTANCE] = params.dofDistWidthMax.x;
     floatValues[FloatConstantIDs::DOF_WIDTH] = params.dofDistWidthMax.y;
     floatValues[FloatConstantIDs::DOF_MAX] = params.dofDistWidthMax.z;
+    floatValues[FloatConstantIDs::MIST_START] = params.mistStartEndCol.x;
+    floatValues[FloatConstantIDs::MIST_END] = params.mistStartEndCol.y;
+    floatValues[FloatConstantIDs::MIST_COLOR] = params.mistStartEndCol.z;
     floatValues[FloatConstantIDs::FOCUS_METHOD_PARAMETER] = params.methodParameter;
     float2 pixelSize{1.0f/resolution.x, 1.0f/resolution.y}; 
     floatValues[FloatConstantIDs::PX_SIZE_X] = pixelSize.x;
@@ -300,7 +305,7 @@ void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
 
 glm::vec3 Interpolator::InterpolationParams::parseCoordinates(std::string coordinates) const
 {
-    if(coordinates == "")
+    if(coordinates == "" || coordinates == "0")
         return {-1,-1,-1};
     constexpr char delim{'_'};
     glm::vec3 numbers;
@@ -311,7 +316,14 @@ glm::vec3 Interpolator::InterpolationParams::parseCoordinates(std::string coordi
     {
         if(i>3)
             throw std::runtime_error("Coordinates too long!");
-        numbers[i] = std::stof(value);
+        if(value[0] == '#')
+        {
+            value.erase(0,1);
+            auto newValue = "0x"+value;
+            numbers[i] = std::stoul(newValue, nullptr, 16); 
+        }
+        else
+            numbers[i] = std::stof(value);
         i++;
     }
 
@@ -353,7 +365,7 @@ MapFilter Interpolator::InterpolationParams::parseMapFilter(std::string filter) 
 {
     if(filter == "NONE")
         return MapFilter::NONE;
-    if(filter == "MED")
+    else if(filter == "MED")
         return MapFilter::MEDIAN;
     std::cerr << "Focus map filter set to default." << std::endl;
     return MapFilter::NONE;
@@ -462,6 +474,21 @@ void Interpolator::runKernel(KernelType type, KernelParams params)
     }
 }
 
+void Interpolator::testKernel(KernelType kernel, std::string label, int runs)
+{
+    std::cout << "Elapsed time of "+label+": "<<std::endl;
+    float avgTime{0};
+    for(int i=0; i<runs; i++)
+    {
+        Timer timer;
+        runKernel(kernel);
+        auto time = timer.stop();
+        avgTime += time;
+        std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
+    }
+    std::cout << "Average of " << runs << " runs of "+label+": " << avgTime/runs << " ms" << std::endl;
+}
+
 void Interpolator::interpolate(InterpolationParams params)
 {
     glm::vec2 coords = glm::vec2(colsRows-1)*params.coordinates;
@@ -469,32 +496,11 @@ void Interpolator::interpolate(InterpolationParams params)
     prepareClosestFrames(coords);
     loadGPUOffsets(coords);   
     loadGPUConstants(params);
-
-    std::cout << "Elapsed time: "<<std::endl;
-    float avgTime{0};
-    for(int i=0; i<params.runs; i++)
-    {
-        Timer timer;
-        runKernel(PROCESS);
-        std::cerr << cudaPeekAtLastError();
-        auto time = timer.stop();
-        avgTime += time;
-        std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
-    }
-    std::cout << "Average of " << params.runs << " runs: " << avgTime/params.runs << " ms" << std::endl;
-
-    Timer timer;
-    postProcess();
-    auto time = timer.stop();
-    std::cout << "Post processing time: " << time << " ms" << std::endl;
+    
+    testKernel(PROCESS, "interpolation", params.runs);
+    testKernel(POST, "post process", params.runs);
 
     storeResults(params.outputPath);
-}
-
-void Interpolator::postProcess()
-{
-    runKernel(POST);
-    cudaDeviceSynchronize();
 }
 
 void Interpolator::storeResults(std::string path)
@@ -514,8 +520,8 @@ void Interpolator::storeResults(std::string path)
             runKernel(ARR_YUV_RGB, {imageData, resolution.x, resolution.y});
 
         cudaMemcpy2D(data.data(), pitch, imageData, pitch, pitch, resolution.y, cudaMemcpyDeviceToHost);
-        if(i == FileNames::FOCUS_MAP && i == FileNames::FOCUS_MAP_POST)
-            stbi_write_png((std::filesystem::path(path)/(fileNames[i]+".png")).c_str(), resolution.x, resolution.y, resolution.z, data.data(), resolution.x*resolution.z);
+        if(i == FileNames::FOCUS_MAP || i == FileNames::FOCUS_MAP_POST)
+            stbi_write_hdr((std::filesystem::path(path)/(fileNames[i]+".hdr")).c_str(), resolution.x, resolution.y, 1, reinterpret_cast<float*>(data.data()));
         else
             stbi_write_png((std::filesystem::path(path)/(fileNames[i]+".png")).c_str(), resolution.x, resolution.y, resolution.z, data.data(), resolution.x*resolution.z);
         bar.add();

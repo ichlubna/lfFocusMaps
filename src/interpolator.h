@@ -28,6 +28,12 @@ class Interpolator
             return this;
         }
         
+        InterpolationParams* setMist(std::string mist)
+        {
+            mistStartEndCol = parseCoordinates(mist); 
+            return this;
+        }
+        
         InterpolationParams* setMethod(std::string inputMethod)
         {
             method = parseMethod(inputMethod);
@@ -120,6 +126,7 @@ class Interpolator
         bool closestViews{false};
         float blockSampling{0};
         glm::vec3 dofDistWidthMax{0,0,0};
+        glm::vec3 mistStartEndCol{0,0,0};
         ColorDistance colorDistance;
         MapFilter mapFilter;
         float scanRange;
@@ -153,8 +160,6 @@ class Interpolator
         int width;
         int height;
     };
-    void runKernel(KernelType, KernelParams={});
-
     AddressMode addressMode{CLAMP};
     bool useSecondaryFolder{false};
     bool useMips{false};
@@ -166,7 +171,7 @@ class Interpolator
     void *textureObjectsArr;
     void *secondaryTextureObjectsArr;
     void *mipTextureObjectsArr;
-    const std::vector<std::string> fileNames{"focusMap", "focusMapPost", "renderImage", "renderImagePost"};
+    const std::vector<std::string> fileNames{"focusMap", "focusMapPost", "renderImage", "renderImagePost", "renderImagePostFiltered"};
     float *weightsGPU;
     size_t channels{4};
     size_t sharedSize{0};
@@ -185,6 +190,7 @@ class Interpolator
     std::pair<int, int*> createSurfaceObject(glm::ivec3 size, const uint8_t *data=nullptr, bool copyFromDevice=false);
     int createTextureObject(const uint8_t *data, glm::ivec3 size);
     void prepareClosestFrames(glm::vec2 viewCoordinates);
-    void postProcess();
+    void runKernel(KernelType, KernelParams={});
+    void testKernel(KernelType kernel, std::string label, int runs);
     AddressMode parseAddressMode(std::string addressMode) const;
 };
