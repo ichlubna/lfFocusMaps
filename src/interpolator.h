@@ -45,6 +45,8 @@ class Interpolator
             auto filters = split(filter);
             for(const auto& f : filters)
                 mapFilters.push_back(parseMapFilter(f));
+            if(mapFilters.size() == 0)
+                mapFilters.push_back(NONE);
             return this;
         }
          
@@ -163,9 +165,11 @@ class Interpolator
         void *data;
         int width;
         int height;
+        bool firstFilter;
         MapFilter filter;
     };
     AddressMode addressMode{CLAMP};
+    bool secondMapActive{false};
     bool useSecondaryFolder{false};
     bool useMips{false};
     bool useYUV{false};
@@ -176,7 +180,7 @@ class Interpolator
     void *textureObjectsArr;
     void *secondaryTextureObjectsArr;
     void *mipTextureObjectsArr;
-    const std::vector<std::string> fileNames{"focusMap", "focusMapPost", "renderImage", "renderImagePost", "renderImagePostFiltered"};
+    const std::vector<std::string> fileNames{"focusMap", "focusMapPost", "focusMapPost", "renderImage", "renderImagePost", "renderImagePostFiltered"};
     float *weightsGPU;
     size_t channels{4};
     size_t sharedSize{0};

@@ -235,11 +235,6 @@ namespace Kernels
             return surf2Dread<float>(Constants::surfaces()[surfaceID], coords.x*sizeof(float), coords.y, cudaBoundaryModeClamp); 
         }
         
-        __device__ float loadDepth(cudaSurfaceObject_t surfaceObj, int2 coords)
-        {
-            return surf2Dread<float>(surfaceObj, coords.x*sizeof(float), coords.y, cudaBoundaryModeClamp); 
-        }
-
         __device__ PixelArray load(int imageID, float2 coords)
         {
             int id = Constants::textures()[imageID];
@@ -875,28 +870,39 @@ namespace Kernels
             return values[MEDIAN_ID];
         }
 
-        __global__ void filterMap(MapFilter filter, cudaSurfaceObject_t tmpInput)
+        __global__ void filterMap(MapFilter filter, bool secondMapActive, bool firstFilter)
         {
             int2 coords = getImgCoords();
             if(coordsOutside(coords, Constants::imgRes()))
                 return;
+            
+            int inputMapID{FileNames::FOCUS_MAP_POST};
+            int outputMapID{FileNames::FOCUS_MAP_POST_SECOND};
+            if(secondMapActive)
+            {
+                int tmp = inputMapID;
+                inputMapID = outputMapID;
+                outputMapID = tmp; 
+            } 
+            if(firstFilter)
+                inputMapID = FileNames::FOCUS_MAP;
 
             float depth{0};
             switch(filter)
             {
                 case NONE:
-                    depth = Pixel::loadDepth(tmpInput, coords); 
+                    depth = Pixel::loadDepth(inputMapID, coords); 
                 break;
                 
                 case MEDIAN:
-                    depth = medianLoad(coords, tmpInput); 
+                    depth = medianLoad(coords, inputMapID); 
                 break;
                 
                 case SNN:
-                    depth = nearestNeighborLoad(coords, tmpInput); 
+                    depth = nearestNeighborLoad(coords, inputMapID); 
                 break;
             }            
-            Pixel::storeDepth(depth, FileNames::FOCUS_MAP_POST, coords);
+            Pixel::storeDepth(depth, outputMapID, coords);
         }
  
         __global__ void applyEffects()

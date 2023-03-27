@@ -482,8 +482,7 @@ void Interpolator::runKernel(KernelType type, KernelParams params)
         case FILTER:
         {
             dim3 dimGrid(glm::ceil(static_cast<float>(resolution.x)/dimBlock.x), glm::ceil(static_cast<float>(resolution.y)/dimBlock.y), 1);
-            auto tmpInput = createSurfaceObject({resolution.xy(),1}, reinterpret_cast<uint8_t*>(surfaceOutputArrays[FileNames::FOCUS_MAP_POST]), true); 
-            Kernels::PostProcess::filterMap<<<dimGrid, dimBlock, sharedSize>>>(params.filter, tmpInput.first);
+            Kernels::PostProcess::filterMap<<<dimGrid, dimBlock, sharedSize>>>(params.filter, secondMapActive, params.firstFilter);
         }
         break;
     }
@@ -497,12 +496,19 @@ void Interpolator::testKernel(KernelType kernel, std::string label, int runs, st
     for(int i=0; i<runs; i++)
     {
         Timer timer;
+        
         if(kernel == FILTER)
-        for(const auto& filter : filters)
         {
-            KernelParams params;
-            params.filter = filter;
-            runKernel(kernel, params);
+            bool firstFilter{true};
+            for(const auto& filter : filters)
+            {
+                KernelParams params;
+                params.filter = filter;
+                params.firstFilter = firstFilter;
+                runKernel(kernel, params);
+                firstFilter = false;
+                secondMapActive = !secondMapActive;
+            }
         }
         else 
             runKernel(kernel);
@@ -541,12 +547,16 @@ void Interpolator::storeResults(std::string path)
     for(int i=0; i<FileNames::OUTPUT_COUNT; i++) 
     {
         cudaMemcpy2DFromArray(imageData, pitch, reinterpret_cast<cudaArray*>(surfaceOutputArrays[i]), 0, 0, pitch, resolution.y, cudaMemcpyDeviceToDevice);
-        if(i != FileNames::FOCUS_MAP && i != FileNames::FOCUS_MAP_POST && useYUV)
+        if(i > FileNames::FOCUS_MAP_POST_SECOND && useYUV)
             runKernel(ARR_YUV_RGB, {imageData, resolution.x, resolution.y});
 
         cudaMemcpy2D(data.data(), pitch, imageData, pitch, pitch, resolution.y, cudaMemcpyDeviceToHost);
-        if(i == FileNames::FOCUS_MAP || i == FileNames::FOCUS_MAP_POST)
+        if(i <= FileNames::FOCUS_MAP_POST_SECOND)
+        {
+            if((secondMapActive && i == FOCUS_MAP_POST) || (!secondMapActive && i == FOCUS_MAP_POST_SECOND) )
+                continue;
             stbi_write_hdr((std::filesystem::path(path)/(fileNames[i]+".hdr")).c_str(), resolution.x, resolution.y, 1, reinterpret_cast<float*>(data.data()));
+        }
         else
             stbi_write_png((std::filesystem::path(path)/(fileNames[i]+".png")).c_str(), resolution.x, resolution.y, resolution.z, data.data(), resolution.x*resolution.z);
         bar.add();
