@@ -42,7 +42,9 @@ class Interpolator
         
         InterpolationParams* setMapFilter(std::string filter)
         {
-            mapFilter = parseMapFilter(filter);
+            auto filters = split(filter);
+            for(const auto& f : filters)
+                mapFilters.push_back(parseMapFilter(f));
             return this;
         }
          
@@ -128,7 +130,7 @@ class Interpolator
         glm::vec3 dofDistWidthMax{0,0,0};
         glm::vec3 mistStartEndCol{0,0,0};
         ColorDistance colorDistance;
-        MapFilter mapFilter;
+        std::vector<MapFilter> mapFilters;
         float scanRange;
         int distanceOrder{1};
         int runs{1};
@@ -139,6 +141,8 @@ class Interpolator
         ScanMetric parseMetric(std::string inputMetric) const;
         ColorDistance parseColorDistance(std::string distance) const;
         MapFilter parseMapFilter(std::string filter) const;
+        std::vector<MapFilter> parseMapFilters(std::string filters) const;
+        std::vector<std::string> split(std::string input, char delimiter='_') const;
     };
 
     Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv, bool useAspect);
@@ -152,13 +156,14 @@ class Interpolator
         glm::ivec2 colsRows;
         glm::ivec3 resolution;
     };
-    enum KernelType{PROCESS, ARR_RGB_YUV, ARR_YUV_RGB, POST};
+    enum KernelType{PROCESS, ARR_RGB_YUV, ARR_YUV_RGB, POST, FILTER};
     class KernelParams
     {
         public:
         void *data;
         int width;
         int height;
+        MapFilter filter;
     };
     AddressMode addressMode{CLAMP};
     bool useSecondaryFolder{false};
@@ -191,6 +196,6 @@ class Interpolator
     int createTextureObject(const uint8_t *data, glm::ivec3 size);
     void prepareClosestFrames(glm::vec2 viewCoordinates);
     void runKernel(KernelType, KernelParams={});
-    void testKernel(KernelType kernel, std::string label, int runs);
+    void testKernel(KernelType kernel, std::string label, int runs, std::vector<MapFilter> filters={});
     AddressMode parseAddressMode(std::string addressMode) const;
 };

@@ -120,11 +120,11 @@ int* Interpolator::loadImageToArray(const uint8_t *data, glm::ivec3 size, bool c
     if(size.z == 1)
         channels = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindUnsigned); 
     cudaArray *arr;
-    cudaMallocArray(&arr, &channels, size.x, size.y, cudaArraySurfaceLoadStore);
+    cudaMallocArray(&arr, &channels, size.x*sizeof(float), size.y, cudaArraySurfaceLoadStore);
     if(data != nullptr)
     {
         if(copyFromDevice)
-            cudaMemcpy2DArrayToArray(arr, 0, 0, reinterpret_cast<cudaArray_const_t>(data), 0, 0, size.x*size.z, size.y, cudaMemcpyDeviceToDevice); 
+            cudaMemcpy2DArrayToArray(arr, 0, 0, reinterpret_cast<cudaArray_const_t>(data), 0, 0, size.x*sizeof(float), size.y, cudaMemcpyDeviceToDevice); 
         else
             cudaMemcpy2DToArray(arr, 0, 0, data, size.x*size.z, size.x*size.z, size.y, cudaMemcpyHostToDevice);
     }
@@ -198,7 +198,6 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     intValues[IntConstantIDs::ROWS] = colsRows.y;
     intValues[IntConstantIDs::DISTANCE_ORDER] = params.distanceOrder;
     intValues[IntConstantIDs::SCAN_METRIC] = params.metric;
-    intValues[IntConstantIDs::MAP_FILTER] = params.mapFilter;
     intValues[IntConstantIDs::FOCUS_METHOD] = params.method;
     intValues[IntConstantIDs::CLOSEST_VIEWS] = params.closestViews;
     intValues[IntConstantIDs::BLOCK_SAMPLING] = (params.blockSampling > 0.000000001);
@@ -303,16 +302,22 @@ void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
     cudaMemcpyToSymbol(Kernels::Constants::weights, weights.data(), weights.size() * sizeof(float));
 }
 
+std::vector<std::string> Interpolator::InterpolationParams::split(std::string input, char delimiter) const
+{
+    std::vector<std::string> values;
+    std::stringstream ss(input); 
+    std::string value; 
+    while(getline(ss, value, delimiter))
+        values.push_back(value);
+    return values;
+}
+
 glm::vec3 Interpolator::InterpolationParams::parseCoordinates(std::string coordinates) const
 {
-    if(coordinates == "" || coordinates == "0")
-        return {-1,-1,-1};
-    constexpr char delim{'_'};
-    glm::vec3 numbers;
-    std::stringstream ss(coordinates); 
-    std::string value; 
+    auto values = split(coordinates);
+    glm::vec3 numbers{0};
     int i{0};
-    while(getline(ss, value, delim))
+    for(auto& value : values)
     {
         if(i>3)
             throw std::runtime_error("Coordinates too long!");
@@ -367,6 +372,8 @@ MapFilter Interpolator::InterpolationParams::parseMapFilter(std::string filter) 
         return MapFilter::NONE;
     else if(filter == "MED")
         return MapFilter::MEDIAN;
+    else if(filter == "SNN")
+        return MapFilter::SNN;
     std::cerr << "Focus map filter set to default." << std::endl;
     return MapFilter::NONE;
 }
@@ -468,20 +475,37 @@ void Interpolator::runKernel(KernelType type, KernelParams params)
         case POST:
         {
             dim3 dimGrid(glm::ceil(static_cast<float>(resolution.x)/dimBlock.x), glm::ceil(static_cast<float>(resolution.y)/dimBlock.y), 1);
-            Kernels::PostProcess::apply<<<dimGrid, dimBlock, sharedSize>>>();
+            Kernels::PostProcess::applyEffects<<<dimGrid, dimBlock, sharedSize>>>();
+        }
+        break;
+        
+        case FILTER:
+        {
+            dim3 dimGrid(glm::ceil(static_cast<float>(resolution.x)/dimBlock.x), glm::ceil(static_cast<float>(resolution.y)/dimBlock.y), 1);
+            auto tmpInput = createSurfaceObject({resolution.xy(),1}, reinterpret_cast<uint8_t*>(surfaceOutputArrays[FileNames::FOCUS_MAP_POST]), true); 
+            Kernels::PostProcess::filterMap<<<dimGrid, dimBlock, sharedSize>>>(params.filter, tmpInput.first);
         }
         break;
     }
+    cudaDeviceSynchronize();
 }
 
-void Interpolator::testKernel(KernelType kernel, std::string label, int runs)
+void Interpolator::testKernel(KernelType kernel, std::string label, int runs, std::vector<MapFilter> filters)
 {
     std::cout << "Elapsed time of "+label+": "<<std::endl;
     float avgTime{0};
     for(int i=0; i<runs; i++)
     {
         Timer timer;
-        runKernel(kernel);
+        if(kernel == FILTER)
+        for(const auto& filter : filters)
+        {
+            KernelParams params;
+            params.filter = filter;
+            runKernel(kernel, params);
+        }
+        else 
+            runKernel(kernel);
         auto time = timer.stop();
         avgTime += time;
         std::cout << "Run #" << i<< ": " << time << " ms" << std::endl;
@@ -498,6 +522,7 @@ void Interpolator::interpolate(InterpolationParams params)
     loadGPUConstants(params);
     
     testKernel(PROCESS, "interpolation", params.runs);
+    testKernel(FILTER, "map filtering", params.runs, params.mapFilters);
     testKernel(POST, "post process", params.runs);
 
     storeResults(params.outputPath);

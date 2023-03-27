@@ -22,7 +22,6 @@ namespace Kernels
         __device__ int gridSize(){return intConstants[IntConstantIDs::GRID_SIZE];}
         __device__ int distanceOrder(){return intConstants[IntConstantIDs::DISTANCE_ORDER];}
         __device__ ScanMetric scanMetric(){return static_cast<ScanMetric>(intConstants[IntConstantIDs::SCAN_METRIC]);}
-        __device__ MapFilter mapFilter(){return static_cast<MapFilter>(intConstants[IntConstantIDs::MAP_FILTER]);}
         __device__ FocusMethod focusMethod(){return static_cast<FocusMethod>(intConstants[IntConstantIDs::FOCUS_METHOD]);}
         __device__ bool closestViews(){return intConstants[IntConstantIDs::CLOSEST_VIEWS];}
         __device__ bool blockSampling(){return intConstants[IntConstantIDs::BLOCK_SAMPLING];}
@@ -234,6 +233,11 @@ namespace Kernels
         __device__ float loadDepth(int surfaceID, int2 coords)
         {
             return surf2Dread<float>(Constants::surfaces()[surfaceID], coords.x*sizeof(float), coords.y, cudaBoundaryModeClamp); 
+        }
+        
+        __device__ float loadDepth(cudaSurfaceObject_t surfaceObj, int2 coords)
+        {
+            return surf2Dread<float>(surfaceObj, coords.x*sizeof(float), coords.y, cudaBoundaryModeClamp); 
         }
 
         __device__ PixelArray load(int imageID, float2 coords)
@@ -810,6 +814,7 @@ namespace Kernels
             color = FocusLevel::render<true>(coords, focus);
         
         Pixel::storeDepth(focus, FileNames::FOCUS_MAP, threadCoords);
+        Pixel::storeDepth(focus, FileNames::FOCUS_MAP_POST, threadCoords);
         Pixel::store(color, FileNames::RENDER_IMAGE, threadCoords);
     }
 
@@ -828,7 +833,29 @@ namespace Kernels
                     }
         }
 
-        __device__ float medianLoad(int2 coords)
+        __device__ float nearestNeighborLoad(int2 coords, cudaSurfaceObject_t input)
+        {
+            constexpr int HALF_KERNEL_SIZE{5};
+            constexpr int KERNEL_SIZE{HALF_KERNEL_SIZE*2+1};
+            constexpr int MEDIAN_SIZE{KERNEL_SIZE*KERNEL_SIZE};
+
+            float center = Pixel::loadDepth(input, coords);
+            float result = center;
+
+            for(int x=-HALF_KERNEL_SIZE; x<=HALF_KERNEL_SIZE; x++)
+                for(int y=-HALF_KERNEL_SIZE; y<0; y++)
+                {
+                    float a = Pixel::loadDepth(FileNames::FOCUS_MAP, {coords.x+x, coords.y+y});
+                    float b = Pixel::loadDepth(FileNames::FOCUS_MAP, {coords.x-x, coords.y-y});
+                    if(fabsf(a-center) < fabsf(b-center))
+                        result += a;
+                    else
+                        result += b;
+                }
+ 
+            return result/(MEDIAN_SIZE/2);
+        }
+        __device__ float medianLoad(int2 coords, cudaSurfaceObject_t input)
         {
             constexpr int HALF_KERNEL_SIZE{1};
             constexpr int KERNEL_SIZE{HALF_KERNEL_SIZE*2+1};
@@ -841,32 +868,44 @@ namespace Kernels
                 for(int y=-HALF_KERNEL_SIZE; y<=HALF_KERNEL_SIZE; y++)
                 {
                     int2 sampleCoords{coords.x+x, coords.y+y}; 
-                    values[i] = Pixel::loadDepth(FileNames::FOCUS_MAP, sampleCoords);
+                    values[i] = Pixel::loadDepth(input, sampleCoords);
                     i++;
                 } 
             bubbleSort(values, MEDIAN_SIZE);
             return values[MEDIAN_ID];
         }
+
+        __global__ void filterMap(MapFilter filter, cudaSurfaceObject_t tmpInput)
+        {
+            int2 coords = getImgCoords();
+            if(coordsOutside(coords, Constants::imgRes()))
+                return;
+
+            float depth{0};
+            switch(filter)
+            {
+                case NONE:
+                    depth = Pixel::loadDepth(tmpInput, coords); 
+                break;
+                
+                case MEDIAN:
+                    depth = medianLoad(coords, tmpInput); 
+                break;
+                
+                case SNN:
+                    depth = nearestNeighborLoad(coords, tmpInput); 
+                break;
+            }            
+            Pixel::storeDepth(depth, FileNames::FOCUS_MAP_POST, coords);
+        }
  
-        __global__ void apply()
+        __global__ void applyEffects()
         {
             int2 coords = getImgCoords();
             if(coordsOutside(coords, Constants::imgRes()))
                 return;
             
-            float depth{0};
-
-            switch(Constants::mapFilter())
-            {
-                case NONE:
-                    depth = Pixel::loadDepth(FileNames::FOCUS_MAP, coords); 
-                break;
-                
-                case MEDIAN:
-                    depth = medianLoad(coords); 
-                break;
-            }            
-            Pixel::storeDepth(depth, FileNames::FOCUS_MAP_POST, coords);
+            float depth = Pixel::loadDepth(FileNames::FOCUS_MAP_POST, coords); 
 
             auto filterColor = FocusLevel::render<true>(normalizeCoords(coords), depth);
             Pixel::store(filterColor, FileNames::RENDER_IMAGE_POST_MAP_FILTER, coords);
