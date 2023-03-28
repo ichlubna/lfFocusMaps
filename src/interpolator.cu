@@ -374,6 +374,10 @@ MapFilter Interpolator::InterpolationParams::parseMapFilter(std::string filter) 
         return MapFilter::MEDIAN;
     else if(filter == "SNN")
         return MapFilter::SNN;
+    else if(filter == "KUW")
+        return MapFilter::KUWAHARA;
+    else if(filter == "TV")
+        return MapFilter::TOTAL_VAR;
     std::cerr << "Focus map filter set to default." << std::endl;
     return MapFilter::NONE;
 }
@@ -537,7 +541,7 @@ void Interpolator::interpolate(InterpolationParams params)
 void Interpolator::storeResults(std::string path)
 {
     std::cout << "Storing results..." << std::endl;
-    LoadingBar bar(FileNames::OUTPUT_COUNT);
+    LoadingBar bar(FileNames::OUTPUT_COUNT-1);
     std::vector<uint8_t> data(resolution.x*resolution.y*resolution.z, 255);
 
     size_t pitch = resolution.x*resolution.z;

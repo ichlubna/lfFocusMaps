@@ -47,6 +47,8 @@ int main(int argc, char **argv)
                           "     NONE (default)\n"
                           "     MED - median\n"
                           "     SNN - symmetric nearest neighbor\n"
+                          "     KUW - Kuwahara filter\n"
+                          "     TV - total variation filter (similar to mean curvature) \n"
                           "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
                           "The output folder then contains:\n"
                           "focusMap.hdr - the computed focus map in HDR format as 32bit float per pixel\n"

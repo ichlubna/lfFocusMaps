@@ -869,6 +869,14 @@ namespace Kernels
             bubbleSort(values, MEDIAN_SIZE);
             return values[MEDIAN_ID];
         }
+        
+        __device__ float kuwaharaLoad(int2 coords, cudaSurfaceObject_t input)
+        {
+        }
+        
+        __device__ float totalVariationLoad(int2 coords, cudaSurfaceObject_t input)
+        {
+        }
 
         __global__ void filterMap(MapFilter filter, bool secondMapActive, bool firstFilter)
         {
@@ -901,8 +909,61 @@ namespace Kernels
                 case SNN:
                     depth = nearestNeighborLoad(coords, inputMapID); 
                 break;
+                
+                case KUWAHARA:
+                    depth = kuwaharaLoad(coords, inputMapID); 
+                break;
+
+                case TOTAL_VAR:
+                    depth = totalVariationLoad(coords, inputMapID); 
+                break;
             }            
             Pixel::storeDepth(depth, outputMapID, coords);
+        }
+
+        __device__ PixelArray dof(PixelArray pixel, int2 coords, float depth, float3 dofDistWidthMax)
+        { 
+            if(dofDistWidthMax.y < 0)
+                return pixel;
+
+            float normalizedDistance = fmaxf(fabsf(depth-dofDistWidthMax.x)-dofDistWidthMax.y, 0)/Constants::scanRange(); 
+            const int maxKernel{__float2int_rn(Constants::imgRes().x*dofDistWidthMax.z)};
+            int kernelSize{__float2int_rn(maxKernel*normalizedDistance)};
+            if(kernelSize%2 == 0)
+                kernelSize++;
+            int halfKernelSize{kernelSize/2};
+            float maxDist = halfKernelSize*halfKernelSize; 
+
+            float totalWeight = 1;
+            for(int x=-halfKernelSize; x<=halfKernelSize; x++)
+            {
+                float xDist = x*x;
+                for(int y=-halfKernelSize; y<=halfKernelSize; y++)
+                {
+                    if(x == 0 && y == 0)
+                        continue;
+                    int2 sampleCoords{coords.x+x, coords.y+y}; 
+                    auto px = Pixel::postLoad(FileNames::RENDER_IMAGE, sampleCoords);
+                    float weight= maxDist - xDist+y*y;
+                    totalWeight += weight;
+                    pixel.addWeighted(weight, px);
+                }
+            }
+            pixel = pixel/totalWeight;
+            return pixel;
+        }
+        
+        __device__ PixelArray mist(PixelArray pixel, float depth, float3 mistStartEndCol)
+        { 
+            if(mistStartEndCol.y <= 0)
+                return pixel;
+
+            unsigned int colorVal =__float2uint_rn(mistStartEndCol.z);
+            uchar4 colorUch = *reinterpret_cast<uchar4*>(&colorVal);
+            PixelArray color{colorUch};
+            float factor = 1.0f-__saturatef((fminf(fmaxf(mistStartEndCol.x, depth),mistStartEndCol.y)-mistStartEndCol.x)/(mistStartEndCol.y-mistStartEndCol.x));
+            pixel.mixInto(color, factor);
+            return pixel;
         }
  
         __global__ void applyEffects()
@@ -917,38 +978,9 @@ namespace Kernels
             Pixel::store(filterColor, FileNames::RENDER_IMAGE_POST_MAP_FILTER, coords);
             PixelArray pixel{filterColor};
              
-            float3 dofDistWidthMax = Constants::dofDistanceWidthMax();
-            if(dofDistWidthMax.y > 0)
-            {
-                float normalizedDistance = fmaxf(fabsf(depth-dofDistWidthMax.x)-dofDistWidthMax.y, 0)/Constants::scanRange(); 
-                const int maxKernel{__float2int_rn(Constants::imgRes().x*dofDistWidthMax.z)};
-                int kernelSize{__float2int_rn(maxKernel*normalizedDistance)};
-                if(kernelSize%2 == 0)
-                    kernelSize++;
-                int halfKernelSize{kernelSize/2};
-                float weight{1.0f/(kernelSize*kernelSize)};
-                pixel = pixel*weight;
+            pixel = dof(pixel, coords, depth, Constants::dofDistanceWidthMax());
+            pixel = mist(pixel, depth, Constants::mistStartEndCol());
 
-                for(int x=-halfKernelSize; x<=halfKernelSize; x++)
-                    for(int y=-halfKernelSize; y<=halfKernelSize; y++)
-                    {
-                        if(x == 0 && y == 0)
-                            continue;
-                        int2 sampleCoords{coords.x+x, coords.y+y}; 
-                        auto px = Pixel::postLoad(FileNames::RENDER_IMAGE, sampleCoords); 
-                        pixel.addWeighted(weight, px);
-                    }
-            }
-
-            float3 mistStartEndCol = Constants::mistStartEndCol();
-            if(mistStartEndCol.y > 0)
-            {
-                unsigned int colorVal =__float2uint_rn(mistStartEndCol.z);
-                uchar4 colorUch = *reinterpret_cast<uchar4*>(&colorVal);
-                PixelArray color{colorUch};
-                float factor = 1.0f-__saturatef((fminf(fmaxf(mistStartEndCol.x, depth),mistStartEndCol.y)-mistStartEndCol.x)/(mistStartEndCol.y-mistStartEndCol.x));
-                pixel.mixInto(color, factor);
-            }  
             uchar4 px = pixel.uch4Raw();
             Pixel::store(px, FileNames::RENDER_IMAGE_POST, coords);
         }

@@ -10,7 +10,7 @@ import traceback
 
 binaryPath = "../build/lfFocusMaps"
 
-def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRange, distanceOrder, scanMetric, scanSpace, colorDist, addressMode, useSecondary):
+def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRange, distanceOrder, scanMetric, scanSpace, colorDist, addressMode, useSecondary, mapFilter):
     command = binaryPath
     command += " -i "+inputDir
     command += " -c "+coord
@@ -24,6 +24,7 @@ def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRa
     command += " -a "+addressMode
     command += " -t 100"
     command += " -y "+colorDist
+    command += " -z "+mapFilter
     if block:
         command += " -b "
     if fast:
@@ -32,6 +33,36 @@ def makeCmd(inputDir, results, coord, scanMethod, parameter, block, fast, scanRa
         command += " -l "
     command += " -n";
     return command
+
+class Comparison:
+    PSNR = 0
+    SSIM = 0
+    VMAF = 0
+    measurements = 0
+
+    def compareResults(referenceFile, resultFile, workspace):
+        comparisonReferencePath = os.path.join(workspace, "compReference")
+        comparisonResultPath = os.path.join(workspace, "compResult")
+        os.mkdir(comparisonResultPath)
+        os.mkdir(comparisonReferencePath)
+
+        shutil.copyfile(referenceFile, os.path.join(comparisonReferencePath, os.path.basename(referenceFile)))
+        shutil.copyfile(resultFile, os.path.join(comparisonResultPath, os.path.basename(resultFile)))
+        evaluator = eva.Evaluator()
+        metrics = evaluator.metrics(comparisonReferencePath, comparisonResultPath)
+        self.PSNR += float(metrics.psnr)
+        self.SSIM += float(metrics.ssim)
+        self.VMAF += float(metrics.vmaf)
+        self.measurements += 1
+
+    def psnr():
+        return self.PSNR/self.measurements
+
+    def ssim():
+        return self.SSIM/self.measurements
+
+    def vmaf():
+        return self.VMAF/self.measurements
 
 def run(inputDir, referenceDir, inputRange):
     scanMethods = [ ("BF", 32), ("BF", 64), ("BF", 128)
@@ -43,6 +74,7 @@ def run(inputDir, referenceDir, inputRange):
     addressModes = [ "WRAP", "CLAMP", "MIRROR", "BORDER", "BLEND", "ALTER" ]
     preprocesses = [ "NONE", "CONTRAST", "EDGE", "SHARPEN", "EQUAL", "SINE_FAST", "SINE_SLOW", "DENOISE", "MEDIAN", "BILATERAL"]
     pyramidPreprocess = [ "RESIZE_QUARTER", "RESIZE_EIGHTH", "GAUSSIAN_ULTRA_HEAVY", "GAUSSIAN_HEAVY", "GAUSSIAN_LIGHT"]
+    filters = [ "MED", "SNN", "KUW", "TV" ]
     distanceOrders = [ 1,2,3,4 ]
 
     workspace = tempfile.mkdtemp()
@@ -51,10 +83,9 @@ def run(inputDir, referenceDir, inputRange):
     downPath = inputPath+"_down"
     secondaryPath = inputPath+"_sec"
     resultsPath = os.path.join(workspace, "results")
-    tempReferencePath = os.path.join(workspace, "reference")
     shutil.rmtree(resultsPath, ignore_errors=True)
     os.mkdir(resultsPath)
-    os.mkdir(tempReferencePath)
+    fileteredResultName = os.path.join(resultsPath, "renderImagePostFiltered.png")
 
     print("Mode, Time [ms], PSNR, SSIM, VMAF")
     pyramidID = 0
@@ -76,52 +107,60 @@ def run(inputDir, referenceDir, inputRange):
                     for scanMetric in scanMetrics:
                         for distanceOrder in distanceOrders:
                             for block in np.linspace(0,20,41):
-                                for fast in [True, False]:
-                                    for colorDist in ["RGB, YUV, Y, YUVw"]:
-                                        references = os.listdir(referenceDir)
-                                        time = 0
-                                        psnr = 0
-                                        ssim = 0
-                                        vmaf = 0
-                                        fastMode = "fast" if fast else "full"
-                                        if pyramidMode != "":
-                                            pyramidMode = "_"+pyramidMode
-                                        mode =  "scan_method:"      + scanMethod[0]+pyramidMode  + "|" +
-                                                "scan_parameter:"   + str(scanMethod[1])    + "|" +
-                                                "scan_space:"       + str(scanSpace)        + "|" +
-                                                "scan_metric:"      + scanMetric            + "|" +
-                                                "preprocessing:"    + preprocess            + "|" +
-                                                "block_size:"       + blockSize             + "|" +
-                                                "fast_mode:"        + fastMode              + "|" +
-                                                "distance_order:"   + str(distanceOrder)    + "|" +
-                                                "color_distance:"   + colorDist             + "|" +
-                                                "address_mode:"     + addressMode
-                                        for reference in references:
-                                            coord = os.path.splitext(reference)[0]
-                                            command = makeCmd(inputPath, resultsPath, coord, scanMethod[0], scanMethod[1], block, fast, inputRange,distanceOrder, scanMetric, scapSpace, colorDist, addressMode, useSecondary)
-                                            result = bash.run(command)
-                                            if(result.returncode != 0):
-                                                print(result.stderr)
-                                                raise Exception("Command not executed.")
-                                            r = result.stdout
-                                            start = "runs: "
-                                            end = " ms"
-                                            time += float(r[r.find(start) + len(start):r.rfind(end)])
-                                            shutil.copyfile(os.path.join(referenceDir, reference), os.path.join(tempReferencePath, reference))
-                                            evaluator = eva.Evaluator()
-                                            metrics = evaluator.metrics(tempReferencePath, resultsPath)
-                                            psnr += float(metrics.psnr)
-                                            ssim += float(metrics.ssim)
-                                            vmaf += float(metrics.vmaf)
-                                        time /= len(references)
-                                        psnr /= len(references)
-                                        ssim /= len(references)
-                                        vmaf /= len(references)
-                                        print(  mode + "\n" +
-                                                "time:" + str(time) + "ms|" +
-                                                "psnr:" + str(psnr) + "|"   +
-                                                "ssim:" + str(ssim) + "|"   +
-                                                "vmaf:" + str(vmaf))
+                                for mapFilter in filters:
+                                    for fast in [True, False]:
+                                        for colorDist in ["RGB, YUV, Y, YUVw"]:
+                                            references = os.listdir(referenceDir)
+                                            fastMode = "fast" if fast else "full"
+                                            if pyramidMode != "":
+                                                pyramidMode = "_"+pyramidMode
+                                            mode =  "scan_method:"      + scanMethod[0]+pyramidMode  + "|" +
+                                                    "scan_parameter:"   + str(scanMethod[1])    + "|" +
+                                                    "scan_space:"       + str(scanSpace)        + "|" +
+                                                    "scan_metric:"      + scanMetric            + "|" +
+                                                    "preprocessing:"    + preprocess            + "|" +
+                                                    "block_size:"       + blockSize             + "|" +
+                                                    "fast_mode:"        + fastMode              + "|" +
+                                                    "distance_order:"   + str(distanceOrder)    + "|" +
+                                                    "color_distance:"   + colorDist             + "|" +
+                                                    "address_mode:"     + addressMode           + "|" +
+                                                    "map_filter:"       + mapFilter
+
+                                            rawComparison = Comparison()
+                                            filteredComparison = Comparison()
+
+                                            time = 0
+                                            timeFilter = 0
+                                            for reference in references:
+                                                coord = os.path.splitext(reference)[0]
+                                                command = makeCmd(inputPath, resultsPath, coord, scanMethod[0], scanMethod[1], block, fast, inputRange,distanceOrder, scanMetric, scapSpace, colorDist, addressMode, useSecondary, mapFilter)
+                                                result = bash.run(command)
+                                                if(result.returncode != 0):
+                                                    print(result.stderr)
+                                                    raise Exception("Command not executed.")
+
+                                                r = result.stdout
+                                                time += float(r[r.find("interpolation: ") + len(" ms"):r.rfind(end)])
+                                                timeFilter += float(r[r.find("filtering: ") + len(" ms"):r.rfind(end)])
+
+                                                referenceName = os.path.join(referenceDir, reference)
+                                                rawResultName = os.path.join(resulsPath, "renderImage.png")
+                                                rawComparison.compareResults(referenceName, rawResultName, workspace)
+                                                filteredComparison.compareResults(referenceName, fileteredResultName, workspace)
+
+                                            time /= len(references)
+                                            timeFilter /= len(references)
+                                            print(  mode + "\n" +
+                                                    "raw \n "+
+                                                    "time:" + str(time) + "ms \n" +
+                                                    "psnr:" + str(rawComparison.psnr()) + "\n"   +
+                                                    "ssim:" + str(rawComparison.ssim()) + "\n"   +
+                                                    "vmaf:" + str(rawComparison.vmaf())) + "\n" +
+                                                    "filtered \n "+
+                                                    "filtering time:" + str(time) + "ms \n" +
+                                                    "psnr:" + str(filteredComparison.psnr()) + "\n"   +
+                                                    "ssim:" + str(filteredComparison.ssim()) + "\n"   +
+                                                    "vmaf:" + str(filteredComparison.vmaf())) + "\n"
     shutil.rmtree(workspace)
 try:
     if len(sys.argv) != 4 or sys.argv[1] == "-h" or sys.argv[1] == "--help":
