@@ -32,7 +32,7 @@ class Timer
     cudaEvent_t startEvent, stopEvent;
 };
 
-Interpolator::Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv, bool aspect) : useSecondaryFolder{useSecondary}, useMips{mips}, useYUV{yuv}, useAspect{aspect}, input{inputPath}
+Interpolator::Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv, float spacingAspect) : useSecondaryFolder{useSecondary}, useMips{mips}, useYUV{yuv}, inputCamerasSpacingAspect{spacingAspect}, input{inputPath}
 {
     addressMode = parseAddressMode(mode);
     init();
@@ -261,7 +261,7 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
 
 void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
 {
-    float aspect = static_cast<float>(resolution.x)/resolution.y;
+    float aspect = (static_cast<float>(resolution.x)/resolution.y) / inputCamerasSpacingAspect;
     std::vector<float2> offsets(colsRows.x*colsRows.y);
     int gridID = 0; 
     for(int row=0; row<colsRows.y; row++) 
@@ -270,8 +270,7 @@ void Interpolator::loadGPUOffsets(glm::vec2 viewCoordinates)
         for(int col=0; col<colsRows.x; col++) 
         {
             float2 offset{(viewCoordinates.x-col)/colsRows.x, (viewCoordinates.y-row)/colsRows.y};
-            if(useAspect)
-                offset.y *= aspect;
+            offset.y *= aspect;
             offsets[gridID] = offset;
             gridID++;
         }

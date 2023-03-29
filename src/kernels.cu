@@ -212,7 +212,7 @@ namespace Kernels
                     dist = fabsf(a[0]-b[0]);
                 break;
             }
-            return __powf (dist, Constants::distanceOrder());
+            return powf (dist, Constants::distanceOrder());
         }
 
         __device__ void store(uchar4 px, int imageID, int2 coords)
@@ -412,7 +412,7 @@ namespace Kernels
         if(space != 1.0f)
         {
             float normalized = focus/range;
-            return __powf(normalized, space)*range;
+            return powf(normalized, space)*range;
         }
         return focus;
     }
@@ -869,9 +869,53 @@ namespace Kernels
             bubbleSort(values, MEDIAN_SIZE);
             return values[MEDIAN_ID];
         }
-        
+       
+        template<int size> 
+        class Statistic
+        {
+            public:
+            __device__ void add(float val) {values[count]=val; count++;}
+            __device__ void clear() {count=0;}
+            __device__ float2 meanAndDeviation()
+            {
+                float m{0};
+                float m2{0};
+                for(int i=0; i<count; i++)
+                {
+                    m2 += values[i]*values[i];
+                    m += values[i];
+                }
+                return {m/size, 1.f/(size-1)*( m2 - (1.f/size)*m*m )}; 
+            }
+
+            private:
+            float values[size];
+            int count=0;
+        };
+
         __device__ float kuwaharaLoad(int2 coords, cudaSurfaceObject_t input)
         {
+            constexpr int HALF_KERNEL_SIZE{4};
+            constexpr int QUADRANT_SIZE{HALF_KERNEL_SIZE+1};
+            constexpr int QUADRANT_COUNT{QUADRANT_SIZE*QUADRANT_SIZE};
+            Statistic<QUADRANT_COUNT> statistic;
+            Focusing::Optimum bestQuadrant;
+            for(int qx=-1; qx<1; qx++)
+                for(int qy=-1; qy<1; qy++)
+                { 
+                    int2 offset{qx*HALF_KERNEL_SIZE, qy*HALF_KERNEL_SIZE};
+                    statistic.clear();
+                    for(int x=offset.x; x<QUADRANT_SIZE+offset.x; x++)
+                        for(int y=offset.y; y<QUADRANT_SIZE+offset.y; y++)
+                        {
+                            int2 sampleCoords{coords.x+x, coords.y+y}; 
+                            auto value = Pixel::loadDepth(input, sampleCoords);
+                            statistic.add(value);
+                        }
+                    auto res = statistic.meanAndDeviation();
+                    bestQuadrant.add(res.x, res.y); 
+                }
+            return bestQuadrant.optimalFocus;
         }
         
         __device__ float totalVariationLoad(int2 coords, cudaSurfaceObject_t input)

@@ -147,7 +147,7 @@ class Interpolator
         std::vector<std::string> split(std::string input, char delimiter='_') const;
     };
 
-    Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv, bool useAspect);
+    Interpolator(std::string inputPath, std::string mode, bool useSecondary, bool mips, bool yuv, float cameraSpacingAspect);
     ~Interpolator();
     void interpolate(InterpolationParams params);
 
@@ -173,7 +173,7 @@ class Interpolator
     bool useSecondaryFolder{false};
     bool useMips{false};
     bool useYUV{false};
-    bool useAspect{false};
+    float inputCamerasSpacingAspect;
     std::vector<int*> surfaceInputArrays;
     std::vector<int*> surfaceOutputArrays;
     void *surfaceObjectsArr;

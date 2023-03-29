@@ -32,6 +32,7 @@ class LFPanel(bpy.types.Panel):
         if context.scene.LFAnalysis:
             col.prop(context.scene, "LFObjectOfInterest")  
             col.prop(context.scene, "LFAnalysisOverlap")
+            col.prop(context.scene, "LFAnalysisSize")
             col.row().operator("lf.depth", text="Average depth")
             if context.scene.LFObjectOfInterest == None:
                 col.row().label(text="Select an object")
@@ -398,7 +399,9 @@ class LFAnalyze(bpy.types.Operator):
     
         x = 2*d*fx-o
         y = 2*d*fy-o
-        return (x, y)
+        
+        scale = context.scene.LFAnalysisSize
+        return (x*scale, y*scale)
     
     def execute(self, context):
         context.scene.LFStep = self.getOffset(context)
@@ -458,6 +461,7 @@ def register():
     bpy.types.Scene.LFAnimation = bpy.props.BoolProperty(name="Render animation", description="Will render all active frames as animation", default=False)
     bpy.types.Scene.LFAnalysis = bpy.props.BoolProperty(name="Recalculate offset", description="Calculates the vertical camera spacing optimally", default=False)
     bpy.types.Scene.LFAnalysisOverlap = bpy.props.FloatProperty(name="Overlap", description="The amount of overlap between the cameras in both directions", min=0, default=0.1)
+    bpy.types.Scene.LFAnalysisSize = bpy.props.FloatProperty(name="Grid size", description="The scaling of the resulting grid", min=0, default=1.0)
     bpy.types.Scene.LFProgress = bpy.props.FloatProperty(name="Progress", description="Progress bar", subtype="PERCENTAGE",soft_min=0, soft_max=100, default=0.0)
     bpy.types.Scene.LFCurrentView = bpy.props.IntVectorProperty(name="Current view", size=3, description="The currenty processed view - XY and third is linear ID", default=(0,0,0))
     bpy.types.Scene.LFCurrentTaskFinished = bpy.props.BoolProperty(name="Current view finished", description="Indicates that the current view was processed", default=True)
