@@ -67,6 +67,7 @@ class Comparison:
 def run(inputDir, referenceDir, inputRange):
     scanMethods = [ ("BF", 32), ("BF", 64), ("BF", 128)
                     ("BFET", 32), ("BFET", 64), ("BFET", 128),
+                    ("VS", 32), ("VSET", 32),
                     ("RAND"), ("TD"),
                     ("HIER", 0), ("DESC", 0),
                     ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0),  ]

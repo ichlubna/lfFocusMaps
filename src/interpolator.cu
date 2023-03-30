@@ -435,6 +435,10 @@ FocusMethod Interpolator::InterpolationParams::parseMethod(std::string method) c
         return FocusMethod::BRUTE_FORCE;
     else if(method == "BFET")
         return FocusMethod::BRUTE_FORCE_EARLY;
+    else if(method == "VS")
+        return FocusMethod::VARIABLE_SCAN;
+    else if(method == "VSET")
+        return FocusMethod::VARIABLE_SCAN_EARLY;
     else if(method == "TD")
         return FocusMethod::TOP_DOWN;
     else if(method == "RAND")

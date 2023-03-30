@@ -596,7 +596,64 @@ namespace Kernels
             }
             return optimum.optimalFocus;
         }
-        
+      
+  
+        template<bool earlyTermination>
+        __device__ float variableScan(float2 coords)
+        {
+            int steps = Constants::focusMethodParameter();
+            float range = Constants::scanRange();
+            constexpr float SHRINK{0.95};
+            constexpr float GROW{1.5};
+            constexpr int THRESHOLD{6};
+            float stepSize{static_cast<float>(0.9f*range/steps)};
+            float focus{0.0f};
+            Optimum optimum;
+
+            int grows{0};           
+ 
+            int wasMin{0};
+            int terminateIn{steps>>2}; 
+            float previousDispersion{-1};
+            while(focus < range)
+            {
+                float dispersion = FocusLevel::evaluate(coords, focus);
+                if constexpr(earlyTermination)
+                {
+                    if(!optimum.add(focus, dispersion))
+                    {
+                        if(++wasMin > terminateIn)
+                            break;
+                    }
+                    else
+                        wasMin = 0;
+                }
+                else
+                    optimum.add(focus, dispersion);
+
+                if(dispersion < previousDispersion)
+                {
+                    grows--;
+                    if(grows > THRESHOLD)
+                    {
+                        stepSize *= GROW;
+                        grows = 0;
+                    }
+                }
+                else
+                {
+                    grows++;
+                    if(grows < -THRESHOLD)
+                    {
+                        stepSize *= SHRINK;
+                        grows = 0;
+                    }
+                }
+                previousDispersion = dispersion; 
+                focus += stepSize;  
+            }
+            return optimum.optimalFocus;
+        }
         __device__ float topDown(float2 coords)
         {
             int steps = 3;
@@ -773,6 +830,14 @@ namespace Kernels
             break;
            
             case BRUTE_FORCE_EARLY:
+                focus = Focusing::bruteForce<true>(coords);
+            break;
+            
+            case VARIABLE_SCAN:
+                focus = Focusing::bruteForce<false>(coords);
+            break;
+           
+            case VARIABLE_SCAN_EARLY:
                 focus = Focusing::bruteForce<true>(coords);
             break;
             
