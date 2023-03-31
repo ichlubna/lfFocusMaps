@@ -73,7 +73,7 @@ def run(inputDir, referenceDir, inputRange):
                     ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0),  ]
     scanMetric = [ "VAR", "ERANGE", "RANGE", "MAD" ]
     addressModes = [ "WRAP", "CLAMP", "MIRROR", "BORDER", "BLEND", "ALTER" ]
-    preprocesses = [ "NONE", "CONTRAST", "EDGE", "SHARPEN", "EQUAL", "SINE_FAST", "SINE_SLOW", "DENOISE", "MEDIAN", "BILATERAL"]
+    preprocesses = [ "NONE", "CONTRAST", "EDGE", "SHARPEN", "EQUAL", "SINE_FAST", "SINE_SLOW", "DENOISE", "MEDIAN", "BILATERAL", "HIGHLIGHT"]
     pyramidPreprocess = [ "RESIZE_QUARTER", "RESIZE_EIGHTH", "GAUSSIAN_ULTRA_HEAVY", "GAUSSIAN_HEAVY", "GAUSSIAN_LIGHT"]
     filters = [ "MED", "SNN", "KUW", "TV" ]
     distanceOrders = [ 1,2,3,4 ]

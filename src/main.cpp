@@ -5,7 +5,7 @@ int main(int argc, char **argv)
 {
     Arguments args(argc, argv);
     std::string helpText{ "Usage:\n"
-                          "-i - folder with lf grid images - named as column_row.extension, e.g.: 01_12.jpg\n"
+                          "-i - folder with lf grid images - named as row_column.extension, e.g.: 01_12.jpg\n"
                           "-l - uses secondary folder with same filenames for focusing, e.g.: -i my/folder => my contains folder and folder_sec (flag) \n"
                           "-c - camera position in normalized coordinates of the grid in format: x_y, e.g., 0.5_0.1\n"
                           "-o - output path\n"

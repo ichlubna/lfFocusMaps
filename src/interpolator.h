@@ -168,6 +168,13 @@ class Interpolator
         bool firstFilter;
         MapFilter filter;
     };
+    class ClosestViews
+    {
+        public:
+        std::vector<float> weights;
+        std::vector<int> ids;
+    };
+
     AddressMode addressMode{CLAMP};
     bool secondMapActive{false};
     bool useSecondaryFolder{false};
@@ -202,4 +209,5 @@ class Interpolator
     void runKernel(KernelType, KernelParams={});
     void testKernel(KernelType kernel, std::string label, int runs, std::vector<MapFilter> filters={});
     AddressMode parseAddressMode(std::string addressMode) const;
+    ClosestViews selectNeighboringFrames(int count, std::vector<float> &weights);
 };

@@ -6,7 +6,8 @@ namespace Kernels
 {
     constexpr int BLOCK_SAMPLE_COUNT{5};
     constexpr int PIXEL_SAMPLE_COUNT{1};
-    constexpr int CLOSEST_COUNT{4}; 
+    constexpr int CLOSEST_COUNT{4};
+    enum DispersionMode{CLOSEST, NEIGHBOR, ALL}; 
 
     namespace Constants
     {
@@ -73,6 +74,8 @@ namespace Kernels
         __constant__ float hierarchySteps[HIERARCHY_DIVISIONS];
         __constant__ int hierarchySamplings[HIERARCHY_DIVISIONS]; 
         __constant__ float2 blockOffsets[BLOCK_OFFSET_COUNT];
+        __constant__ float neighborWeights[NEIGHBOR_VIEWS_COUNT];
+        __constant__ int neighborIds[NEIGHBOR_VIEWS_COUNT];
     }
 
     //extern __shared__ half localMemory[];
@@ -432,23 +435,20 @@ namespace Kernels
             }
         }
 
-        template<typename T, int blockSize, bool closest=false>
+        template<typename T, int blockSize, DispersionMode mode>
         __device__ float evaluateDispersion(float2 coords, float focus)
         {
             auto cr = Constants::colsRows();
             T dispersionCalc[blockSize];
                 
             int gridID = 0;
-
-            if constexpr (closest)
-            {  
+            if constexpr (mode == CLOSEST)
                 for(int i=0; i<CLOSEST_COUNT; i++) 
                 {     
                     int gridID = Constants::closestCoords[i];
                     evaluateBlock<blockSize>(gridID, focus, coords, dispersionCalc);
                 }           
-            }
-            else
+            else if constexpr (mode == ALL)
                 for(int row=0; row<cr.y; row++) 
                 {     
                     gridID = row*cr.x;
@@ -457,30 +457,36 @@ namespace Kernels
                         evaluateBlock<blockSize>(gridID, focus, coords, dispersionCalc);
                         gridID++;
                     }
-                }
-
+                } 
+            else if constexpr (mode == NEIGHBOR)
+                for(int i=0; i<NEIGHBOR_VIEWS_COUNT; i++) 
+                {     
+                    int gridID = Constants::neighborIds[i];
+                    evaluateBlock<blockSize>(gridID, focus, coords, dispersionCalc);
+                }          
+ 
             float finalDispersion{0};
             for(int blockPx=0; blockPx<blockSize; blockPx++)
                 finalDispersion += dispersionCalc[blockPx].dispersionAmount();
             return finalDispersion;
         }
 
-        template<int blockSize, bool closest, typename...TAIL>
+        template<int blockSize, DispersionMode mode, typename...TAIL>
         __device__ typename std::enable_if_t<sizeof...(TAIL)==0, float> 
         call(int,ScanMetric,float2,float){}
 
-        template<int blockSize, bool closest, typename H, typename...TAIL>
+        template<int blockSize, DispersionMode mode, typename H, typename...TAIL>
         __device__ float call(int n,ScanMetric type, float2 coords, float focus)
         {
             if(n==type)
-                return evaluateDispersion<H, blockSize, closest>(coords, focus);
-            return call<blockSize, closest, TAIL...>(n+1,type, coords, focus);
+                return evaluateDispersion<H, blockSize, mode>(coords, focus);
+            return call<blockSize, mode, TAIL...>(n+1,type, coords, focus);
         }
 
-        template<int blockSize, bool closest=false>
+        template<int blockSize, DispersionMode mode>
         __device__ float dispersion(ScanMetric t, float2 coords, float focus)
         {
-            return call<blockSize, closest, ScanMetrics::OnlineVariance, ScanMetrics::ElementRange, ScanMetrics::Range, ScanMetrics::Mad>(0,t, coords, focus);
+            return call<blockSize, mode, ScanMetrics::OnlineVariance, ScanMetrics::ElementRange, ScanMetrics::Range, ScanMetrics::Mad>(0,t, coords, focus);
         }
 
         __device__ float evaluate(float2 coords, float focus)
@@ -491,33 +497,31 @@ namespace Kernels
  
             if(closestViews)
                 if(blockSampling)
-                    return dispersion<BLOCK_SAMPLE_COUNT, true>(scanMetric, coords, focus);
+                    return dispersion<BLOCK_SAMPLE_COUNT, CLOSEST>(scanMetric, coords, focus);
                 else
-                    return dispersion<PIXEL_SAMPLE_COUNT, true>(scanMetric, coords, focus);
+                    return dispersion<PIXEL_SAMPLE_COUNT, CLOSEST>(scanMetric, coords, focus);
             else
                 if(blockSampling)
-                    return dispersion<BLOCK_SAMPLE_COUNT>(scanMetric, coords, focus);
+                    return dispersion<BLOCK_SAMPLE_COUNT, NEIGHBOR>(scanMetric, coords, focus);
                 else
-                    return dispersion<PIXEL_SAMPLE_COUNT>(scanMetric, coords, focus);
+                    return dispersion<PIXEL_SAMPLE_COUNT, NEIGHBOR>(scanMetric, coords, focus);
         }
        
-        template<bool closest=false>
+        template<DispersionMode mode>
         __device__ uchar4 render(float2 coords, float focus)
         {
             auto cr = Constants::colsRows();
             PixelArray sum;
             int gridID = 0; 
-            
-            if constexpr (closest)
-            {
+          
+            if constexpr (mode == CLOSEST) 
                 for(int i=0; i<CLOSEST_COUNT; i++) 
                 {
                     gridID = Constants::closestCoords[i];
                     auto px{Pixel::load(gridID, focusCoords(gridID, coords, focus))};
                     sum.addWeighted(Constants::closestWeights[i], px);
                 }
-            }
-            else
+            else if constexpr (mode == ALL)
             {
                 auto weights = Constants::weights;
                 for(int row=0; row<cr.y; row++) 
@@ -531,6 +535,14 @@ namespace Kernels
                     }
                 }
             }
+            else if constexpr (mode == NEIGHBOR)
+                for(int i=0; i<NEIGHBOR_VIEWS_COUNT; i++) 
+                {
+                    gridID = Constants::neighborIds[i];
+                    auto px{Pixel::load(gridID, focusCoords(gridID, coords, focus))};
+                    sum.addWeighted(Constants::neighborWeights[i], px);
+                }
+
             return sum.uch4();
         }      
     }
@@ -869,9 +881,9 @@ namespace Kernels
         uchar4 color{0};
         
         if(Constants::focusMethod() == ONE_DISTANCE)
-            color = FocusLevel::render(coords, focus);
+            color = FocusLevel::render<ALL>(coords, focus);
         else
-            color = FocusLevel::render<true>(coords, focus);
+            color = FocusLevel::render<CLOSEST>(coords, focus);
         
         Pixel::storeDepth(focus, FileNames::FOCUS_MAP, threadCoords);
         Pixel::storeDepth(focus, FileNames::FOCUS_MAP_POST, threadCoords);
@@ -1083,7 +1095,7 @@ namespace Kernels
             
             float depth = Pixel::loadDepth(FileNames::FOCUS_MAP_POST, coords); 
 
-            auto filterColor = FocusLevel::render<true>(normalizeCoords(coords), depth);
+            auto filterColor = FocusLevel::render<CLOSEST>(normalizeCoords(coords), depth);
             Pixel::store(filterColor, FileNames::RENDER_IMAGE_POST_MAP_FILTER, coords);
             PixelArray pixel{filterColor};
              

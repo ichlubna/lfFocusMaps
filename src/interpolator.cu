@@ -1,6 +1,8 @@
 #include <stdexcept>
 #define GLM_FORCE_SWIZZLE
 #include <sstream>
+#include <numeric>
+#include <algorithm>
 #include <cuda_runtime.h>
 #include "interpolator.h"
 #include "kernels.cu"
@@ -295,10 +297,34 @@ std::vector<float> Interpolator::generateWeights(glm::vec2 coords)
     return weightVals;
 }
 
+Interpolator::ClosestViews Interpolator::selectNeighboringFrames(int count, std::vector<float> &weights)
+{
+    std::vector<int> indices(weights.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    auto comparator = [&weights](int a, int b){ return weights[a] > weights[b]; };
+    std::sort(indices.begin(), indices.end(), comparator);
+
+    std::vector<float> closestWeights(count);
+    std::vector<int> closestIds(count);
+    float totalWeights{0};
+    for(int i=0; i<count; i++)
+    {
+        closestIds[i] = indices[i];
+        closestWeights[i] = weights[i];
+        totalWeights += weights[i];
+    }
+    for(auto &w : weights)
+        w /= totalWeights;
+    return {closestWeights, closestIds};
+}
+
 void Interpolator::loadGPUWeights(glm::vec2 viewCoordinates)
 {
     auto weights = generateWeights(viewCoordinates);
     cudaMemcpyToSymbol(Kernels::Constants::weights, weights.data(), weights.size() * sizeof(float));
+    auto closest = selectNeighboringFrames(NEIGHBOR_VIEWS_COUNT, weights);
+    cudaMemcpyToSymbol(Kernels::Constants::neighborWeights, closest.weights.data(), closest.weights.size() * sizeof(float));
+    cudaMemcpyToSymbol(Kernels::Constants::neighborIds, closest.ids.data(), closest.ids.size() * sizeof(int));
 }
 
 std::vector<std::string> Interpolator::InterpolationParams::split(std::string input, char delimiter) const
