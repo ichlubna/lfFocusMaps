@@ -3,6 +3,7 @@ import sys
 import os
 import math
 import cv2
+import cython
 
 def resize(img, amount):
     return cv2.resize(img, (int(img.shape[1]*amount), int(img.shape[0]*amount)), interpolation=cv2.INTER_AREA)
@@ -63,9 +64,43 @@ def bilateral(img):
 def gaussian(img,amount):
     return cv2.GaussianBlur(img,(amount, amount),0)
 
+def clamp(val, minval, maxval):
+    if val < minval: return minval
+    if val > maxval: return maxval
+    return val
+
+def highlight(img):
+    BLOCK_HALF = 1
+    BLOCK_SIZE = (2*BLOCK_HALF+1)*(2*BLOCK_HALF+1)
+    h = img.shape[0]
+    w = img.shape[1]
+    result = img.copy()
+    for y in range(h):
+        for x in range(w):
+            pixels = []
+            mean = np.array([0.0,0.0,0.0])
+            for i in range(-BLOCK_HALF, BLOCK_HALF+1):
+                for j in range(-BLOCK_HALF, BLOCK_HALF+1):
+                    yy = clamp(y+i, 0, h-1)
+                    xx = clamp(x+j, 0, w-1)
+                    px = img[yy, xx]
+                    pixels.append(px)
+                    mean += px
+            mean /= BLOCK_SIZE
+            maxDist = -1
+            color = None
+            for i in range(BLOCK_SIZE):
+                d = (mean[0] - pixels[i][0])**2 + (mean[1] - pixels[i][1])**2 + (mean[2] - pixels[i][2])**2
+                if d > maxDist:
+                    maxDist = d
+                    color = pixels[i]
+            result[y,x] = color
+    return result
+
 def preprocess(inputDir, outputDir, method):
     files = sorted(os.listdir(inputDir))
     for file in files:
+        print(".")
         inputFile = os.path.join(inputDir, file)
         outputFile = os.path.join(outputDir, file)
         img = cv2.imread(inputFile)
@@ -98,6 +133,8 @@ def preprocess(inputDir, outputDir, method):
             result = median(img)
         elif method == "BILATERAL":
             result = bilateral(img)
+        elif method == "HIGHLIGHT":
+            result = highlight(img)
         else:
             raise Exception("The requested method is not available.")
         cv2.imwrite(outputFile, result)
