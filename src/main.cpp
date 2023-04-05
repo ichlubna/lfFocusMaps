@@ -34,9 +34,9 @@ int main(int argc, char **argv)
                           "     Y - difference between Y values (intensity without color)\n"
                           "     YUV - Chebyshev YUV\n"
                           "     YUVw - Weighted Chebyshev YUV - more focus on colors\n"
-                          "-b - block sampling - uses also neighboring pixels for matching and takes float number > 0 (0 means that no block sampling will be used and is default)\n"
+                          "-b - block sampling - uses also neighboring pixels for matching and takes float number of pixels > 0 (0 means that no block sampling will be used and is default)\n"
                           "-f - use faster variant with only four closest views (flag)\n"
-                          "-r - normalized scanning range - the maximum disparity between input images, default is half of image width - 0.5\n"
+                          "-r - normalized scanning range - the maximum and minimum disparity between input images, default is from zero to half of image width - 0.0_0.5\n"
                           "-d - order of the distance function, e.g., 2 => distance = distance^2, default is 1"
                           "-t - number of kernel runs for performance measurement - default is 1\n"
                           "-a - address mode - what to sample outside the images: WRAP, CLAMP, MIRROR, BORDER, BLEND, ALTER - default is CLAMP\n"
@@ -49,7 +49,6 @@ int main(int argc, char **argv)
                           "     MED - median\n"
                           "     SNN - symmetric nearest neighbor\n"
                           "     KUW - Kuwahara filter\n"
-                          "     TV - total variation filter (similar to mean curvature) \n"
                           "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
                           "The output folder then contains:\n"
                           "focusMap.hdr - the computed focus map in HDR format as 32bit float per pixel\n"
@@ -79,7 +78,7 @@ int main(int argc, char **argv)
         ->setSpace(static_cast<float>(args["-s"]))
         ->setMethodParameter(static_cast<float>(args["-p"]))
         ->setCoordinates(static_cast<std::string>(args["-c"]))
-        ->setScanRange(static_cast<float>(args["-r"]))
+        ->setScanRange(static_cast<std::string>(args["-r"]))
         ->setOutputPath(static_cast<std::string>(args["-o"]))
         ->setRuns(std::stoi(static_cast<std::string>(args["-t"])))
         ->setDistanceOrder(static_cast<int>(args["-d"]))

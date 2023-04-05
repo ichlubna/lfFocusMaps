@@ -210,13 +210,14 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     
     std::vector<float> floatValues(FloatConstantIDs::FLOAT_CONSTANTS_COUNT);
     floatValues[FloatConstantIDs::SPACE] = params.space;
-    float range = (params.scanRange > 0) ? params.scanRange : 0.5f; 
-    floatValues[FloatConstantIDs::DESCENT_START_STEP] = (static_cast<float>(range)/DESCENT_START_POINTS)/4.0f;
-    floatValues[FloatConstantIDs::SCAN_RANGE] = range;
-    float pyramidBroadStep = range/PYRAMID_DIVISIONS_BROAD;
+    float rangeSize = params.scanRange.y - params.scanRange.x; 
+    floatValues[FloatConstantIDs::DESCENT_START_STEP] = rangeSize/DESCENT_START_POINTS/4.0f;
+    floatValues[FloatConstantIDs::SCAN_RANGE_SIZE] = rangeSize;
+    floatValues[FloatConstantIDs::SCAN_RANGE_START] = params.scanRange.x;
+    floatValues[FloatConstantIDs::SCAN_RANGE_END] = params.scanRange.y;
+    float pyramidBroadStep = rangeSize/PYRAMID_DIVISIONS_BROAD;
     floatValues[FloatConstantIDs::PYRAMID_BROAD_STEP] = pyramidBroadStep; 
     floatValues[FloatConstantIDs::PYRAMID_NARROW_STEP] = pyramidBroadStep/PYRAMID_DIVISIONS_NARROW; 
-    floatValues[FloatConstantIDs::SCAN_RANGE] = range;
     floatValues[FloatConstantIDs::DOF_DISTANCE] = params.dofDistWidthMax.x;
     floatValues[FloatConstantIDs::DOF_WIDTH] = params.dofDistWidthMax.y;
     floatValues[FloatConstantIDs::DOF_MAX] = params.dofDistWidthMax.z;
@@ -239,17 +240,17 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     constexpr float START_STEP{1.0f/(DESCENT_START_POINTS)};
     float startFocuses[DESCENT_START_POINTS];
     for(int i=1; i<DESCENT_START_POINTS; i++)
-        startFocuses[i] = START_STEP*i*range;
+        startFocuses[i] = params.scanRange.x+START_STEP*i*rangeSize;
     cudaMemcpyToSymbol(Kernels::Constants::descentStartPoints, startFocuses, DESCENT_START_POINTS * sizeof(float));
     
     float hierarchySteps[HIERARCHY_DIVISIONS];
     int hierarchySamplings[HIERARCHY_DIVISIONS];
     int currentSampling{15};
-    float currentRange{static_cast<float>(range)};
+    float currentRange{rangeSize};
     for(int i=0; i<HIERARCHY_DIVISIONS; i++)
     {
         hierarchySamplings[i] = currentSampling;
-        hierarchySteps[i] = currentRange/currentSampling;
+        hierarchySteps[i] = params.scanRange.x+currentRange/currentSampling;
         currentSampling /= 2;
         currentRange /= 2;
     }
@@ -313,7 +314,7 @@ Interpolator::ClosestViews Interpolator::selectNeighboringFrames(int count, std:
         closestWeights[i] = weights[i];
         totalWeights += weights[i];
     }
-    for(auto &w : weights)
+    for(auto &w : closestWeights)
         w /= totalWeights;
     return {closestWeights, closestIds};
 }
@@ -401,8 +402,6 @@ MapFilter Interpolator::InterpolationParams::parseMapFilter(std::string filter) 
         return MapFilter::SNN;
     else if(filter == "KUW")
         return MapFilter::KUWAHARA;
-    else if(filter == "TV")
-        return MapFilter::TOTAL_VAR;
     std::cerr << "Focus map filter set to default." << std::endl;
     return MapFilter::NONE;
 }

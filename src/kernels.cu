@@ -51,7 +51,8 @@ namespace Kernels
         __constant__ float floatConstants[FloatConstantIDs::FLOAT_CONSTANTS_COUNT];
         __device__ float scanSpace(){return floatConstants[FloatConstantIDs::SPACE];}
         __device__ float descentStartStep(){return floatConstants[FloatConstantIDs::DESCENT_START_STEP];}
-        __device__ float scanRange(){return floatConstants[FloatConstantIDs::SCAN_RANGE];}
+        __device__ float2 scanRange(){return {floatConstants[FloatConstantIDs::SCAN_RANGE_START], floatConstants[FloatConstantIDs::SCAN_RANGE_END]};}
+        __device__ float scanRangeSize(){return floatConstants[FloatConstantIDs::SCAN_RANGE_SIZE];}
         __device__ float pyramidBroadStep(){return floatConstants[FloatConstantIDs::PYRAMID_BROAD_STEP];}
         __device__ float pyramidNarrowStep(){return floatConstants[FloatConstantIDs::PYRAMID_NARROW_STEP];}
         __device__ float focusMethodParameter(){return floatConstants[FloatConstantIDs::FOCUS_METHOD_PARAMETER];}
@@ -410,12 +411,16 @@ namespace Kernels
         return coords;
     }
 
-    __device__ float transformFocus(float focus, int range, float space)
+    __device__ float transformFocus(float focus)
     {
+        float space = Constants::scanSpace();
         if(space != 1.0f)
         {
-            float normalized = focus/range;
-            return powf(normalized, space)*range;
+            float2 range = Constants::scanRange();
+            float size = Constants::scanRangeSize();
+            float normalized = (focus-range.x)/size;
+            //return powf(normalized, space)*size+range.x;
+            return __fmaf_rn(powf(normalized, space), size, range.x);
         }
         return focus;
     }
@@ -425,7 +430,7 @@ namespace Kernels
         template<int blockSize, typename T> 
         __device__ void evaluateBlock(int gridID, float focus, float2 coords, T *dispersions)
         {
-            float transformedFocus = transformFocus(focus, Constants::scanRange(), Constants::scanSpace());
+            float transformedFocus = transformFocus(focus);
             for(int blockPx=0; blockPx<blockSize; blockPx++)
             {
                 float2 offset = Constants::blockOffsets[blockPx]; 
@@ -583,8 +588,8 @@ namespace Kernels
         __device__ float bruteForce(float2 coords)
         {
             int steps = Constants::focusMethodParameter();
-            float stepSize{static_cast<float>(Constants::scanRange())/steps};
-            float focus{0.0f};
+            float stepSize{static_cast<float>(Constants::scanRangeSize())/steps};
+            float focus{Constants::scanRange().x};
             Optimum optimum;
             
             int wasMin{0};
@@ -614,12 +619,12 @@ namespace Kernels
         __device__ float variableScan(float2 coords)
         {
             int steps = Constants::focusMethodParameter();
-            float range = Constants::scanRange();
+            float2 range = Constants::scanRange();
             constexpr float SHRINK{0.95};
             constexpr float GROW{1.5};
             constexpr int THRESHOLD{6};
-            float stepSize{static_cast<float>(0.9f*range/steps)};
-            float focus{0.0f};
+            float stepSize{0.9f*Constants::scanRangeSize()/steps};
+            float focus{range.x};
             Optimum optimum;
 
             int grows{0};           
@@ -627,7 +632,7 @@ namespace Kernels
             int wasMin{0};
             int terminateIn{steps>>2}; 
             float previousDispersion{-1};
-            while(focus < range)
+            while(focus < range.y)
             {
                 float dispersion = FocusLevel::evaluate(coords, focus);
                 if constexpr(earlyTermination)
@@ -666,11 +671,13 @@ namespace Kernels
             }
             return optimum.optimalFocus;
         }
+
         __device__ float topDown(float2 coords)
         {
             int steps = 3;
-            float step{static_cast<float>(Constants::scanRange())*0.5f};
-            float focus{0.0f};
+            float step{static_cast<float>(Constants::scanRangeSize())*0.5f};
+            float2 range = Constants::scanRange();
+            float focus{range.x};
             Optimum optimum;
             
             int wasMin{0};
@@ -710,7 +717,7 @@ namespace Kernels
             int2 res = Constants::imgRes();
             unsigned int a =Constants::ClockSeed()+ coords.y*res.y*res.x +  coords.x*res.x; 
             curand_init(Constants::ClockSeed()+a,0, 0, &state);
-            float range = Constants::scanRange();
+            float range = Constants::scanRangeSize();
             Optimum optimum;
            
             int wasMin{0}; 
@@ -732,10 +739,9 @@ namespace Kernels
        
         __device__ float hierarchical(float2 coords)
         {
-            int range = Constants::scanRange();
+            float2 dividedRange = Constants::scanRange();
             Optimum optimum; 
             bool divide{true};
-            float2 dividedRange{0, static_cast<float>(range)};
             for(int d=0; d<HIERARCHY_DIVISIONS; d++)
             {  
                 Optimum leftRightOptimum[2];
@@ -801,7 +807,7 @@ namespace Kernels
             float broadStep = Constants::pyramidBroadStep();
             Constants::setMipTextures();
             Optimum optimumBroad;
-            float focus{0};
+            float focus{Constants::scanRange().x};
             for(int i=0; i<PYRAMID_DIVISIONS_BROAD; i++)
             {
                 optimumBroad.add(focus, FocusLevel::evaluate(coords, focus));
@@ -995,10 +1001,6 @@ namespace Kernels
             return bestQuadrant.optimalFocus;
         }
         
-        __device__ float totalVariationLoad(int2 coords, cudaSurfaceObject_t input)
-        {
-        }
-
         __global__ void filterMap(MapFilter filter, bool secondMapActive, bool firstFilter)
         {
             int2 coords = getImgCoords();
@@ -1034,10 +1036,6 @@ namespace Kernels
                 case KUWAHARA:
                     depth = kuwaharaLoad(coords, inputMapID); 
                 break;
-
-                case TOTAL_VAR:
-                    depth = totalVariationLoad(coords, inputMapID); 
-                break;
             }            
             Pixel::storeDepth(depth, outputMapID, coords);
         }
@@ -1047,7 +1045,7 @@ namespace Kernels
             if(dofDistWidthMax.y < 0)
                 return pixel;
 
-            float normalizedDistance = fmaxf(fabsf(depth-dofDistWidthMax.x)-dofDistWidthMax.y, 0)/Constants::scanRange(); 
+            float normalizedDistance = fmaxf(fabsf(depth-dofDistWidthMax.x)-dofDistWidthMax.y, 0)/Constants::scanRangeSize(); 
             const int maxKernel{__float2int_rn(Constants::imgRes().x*dofDistWidthMax.z)};
             int kernelSize{__float2int_rn(maxKernel*normalizedDistance)};
             if(kernelSize%2 == 0)

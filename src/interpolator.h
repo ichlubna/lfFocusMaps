@@ -89,11 +89,13 @@ class Interpolator
             return this;
         }
 
-        InterpolationParams* setScanRange(float range)
+        InterpolationParams* setScanRange(std::string range)
         {
-            if(range < 0)
+            scanRange = parseCoordinates(range);
+            if(scanRange.x < 0 || scanRange.y < 0)
                 throw std::runtime_error("Focusing scanning range cannot be negative!");
-            scanRange = range;
+            if(scanRange.x > scanRange.y)
+                throw std::runtime_error("The start of the scan range has to be lower than the end!");
             return this;
         }
         
@@ -133,7 +135,7 @@ class Interpolator
         glm::vec3 mistStartEndCol{0,0,0};
         ColorDistance colorDistance;
         std::vector<MapFilter> mapFilters;
-        float scanRange;
+        glm::vec2 scanRange{0,0.5};
         int distanceOrder{1};
         int runs{1};
         
