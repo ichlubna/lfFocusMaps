@@ -49,13 +49,14 @@ int main(int argc, char **argv)
                           "     MED - median\n"
                           "     SNN - symmetric nearest neighbor\n"
                           "     KUW - Kuwahara filter\n"
-                          "Example: lfInterpolator -i /MyAmazingMachine/thoseImages -t 0.0,0.0,1.0,1.0  -o ./outputs\n"
-                          "The output folder then contains:\n"
+                          "Example:\n"
+                          "lfFocusMaps -i /MyAmazingMachine/theImages -o ./outputs -c 0.5_0.5 -m BF -p 32 -g 1 -z MED -x 0.5_0.1_0.2\n"
+                          "The output folder contains:\n"
                           "focusMap.hdr - the computed focus map in HDR format as 32bit float per pixel\n"
-                          "focusMapPost.hdr - the focus map used in the post processing (e.g. affected by -t)\n"
+                          "focusMapPost.hdr - the filtered focus map used in the post processing\n"
                           "renderImage.png - the novel interpolated view at position defined by -c\n"
                           "renderImagePost.png - the novel view with post-processing effects (e.g. -x or -n)\n"
-                          "renderImagePostFiltered.png - the novel view rendered with the filtered map defined by -t\n"
+                          "renderImagePostFiltered.png - the novel view rendered with the filtered map\n"
                         };
     if(args.printHelpIfPresent(helpText))
         return 0;

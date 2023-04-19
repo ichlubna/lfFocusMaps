@@ -31,5 +31,6 @@ C4=$((COUNT-1))
 C4=$(printf $TEMP"/%05d."$EXT $C4)
 
 convert \( $C1 $C2 +append \) \( $C3 $C4 +append \) -append -resize 640x $2"_thumb.jpg"
+montage $1"/*."$EXT -tile $3"x"$3 -geometry 256x144+0+0 $2"_fullThumb.jpg"
 
 rm -rf $TEMP

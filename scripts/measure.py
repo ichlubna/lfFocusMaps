@@ -75,7 +75,7 @@ def run(inputDir, referenceDir, inputRange):
     addressModes = [ "WRAP", "CLAMP", "MIRROR", "BORDER", "BLEND", "ALTER" ]
     preprocesses = [ "NONE", "CONTRAST", "EDGE", "SHARPEN", "EQUAL", "SINE_FAST", "SINE_SLOW", "DENOISE", "MEDIAN", "BILATERAL", "HIGHLIGHT"]
     pyramidPreprocess = [ "RESIZE_QUARTER", "RESIZE_EIGHTH", "GAUSSIAN_ULTRA_HEAVY", "GAUSSIAN_HEAVY", "GAUSSIAN_LIGHT"]
-    filters = [ "MED", "SNN", "KUW", "TV" ]
+    filters = [ "MED", "SNN", "KUW" ]
     distanceOrders = [ 1,2,3,4 ]
 
     workspace = tempfile.mkdtemp()
