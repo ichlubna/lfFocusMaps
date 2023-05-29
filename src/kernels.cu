@@ -65,6 +65,7 @@ namespace Kernels
         __device__ float mistColor(){return floatConstants[FloatConstantIDs::MIST_COLOR];}
         __device__ float3 mistStartEndCol(){return {mistStart(), mistEnd(), mistColor()};}
         __device__ float2 pixelSize(){return {floatConstants[FloatConstantIDs::PX_SIZE_X], floatConstants[FloatConstantIDs::PX_SIZE_Y]};}
+        __device__ float2 halfPixelSize(){return {floatConstants[FloatConstantIDs::PX_SIZE_X_HALF], floatConstants[FloatConstantIDs::PX_SIZE_Y_HALF]};}
 
         __device__ constexpr int MAX_IMAGES{256};
         __constant__ float descentStartPoints[DESCENT_START_POINTS];
@@ -242,6 +243,7 @@ namespace Kernels
         __device__ PixelArray load(int imageID, float2 coords)
         {
             int id = Constants::textures()[imageID];
+            float2 halfPx = Constants::halfPixelSize();
             switch(Constants::addressMode())
             {
                 case AddressMode::ALTER:
@@ -258,7 +260,7 @@ namespace Kernels
                            c.y = coords.y-pixel.y; 
                     else if(coords.y < 0.0f && odd.y == 0)
                            c.y = coords.y+pixel.y; 
-                    return tex2D<float4>(id, c.x, c.y);
+                    return tex2D<float4>(id, c.x+halfPx.x, c.y+halfPx.y);
                 }
                 break;
 
@@ -273,13 +275,13 @@ namespace Kernels
                     PixelArray pixel;
                     const float2 offsets[4] = {{offset, offset}, {offset, -offset}, {-offset, -offset}, {-offset, offset}};
                     for(int i=0; i<4; i++)
-                        pixel += tex2D<float4>(id, coords.x+offsets[i].x, coords.y+offsets[i].y); 
+                        pixel += tex2D<float4>(id, coords.x+offsets[i].x+halfPx.x, coords.y+offsets[i].y+halfPx.y); 
                     return pixel/4;
                 }
                 break;
         
                 default:
-                    return tex2D<float4>(id, coords.x, coords.y);
+                    return tex2D<float4>(id, coords.x+halfPx.x, coords.y+halfPx.y);
                 break;
             } 
         }
@@ -613,58 +615,88 @@ namespace Kernels
             }
             return optimum.optimalFocus;
         }
-      
-  
+
+        __device__ float bruteForceETTwoWay(float2 coords)
+        {
+            int steps = Constants::focusMethodParameter();
+            float stepSize{static_cast<float>(Constants::scanRangeSize())/steps};
+            float2 range{Constants::scanRange()};
+            float rangeStart{range.x+Constants::scanRangeSize()/2};
+            Optimum optimum;
+            
+            int wasMin{0};
+            int terminateIn{steps>>4}; 
+            for(int step=0; step<steps; step++)
+            {
+                int realStep = step>>2;
+                int direction = step%4;
+                float focus{0};
+                if(direction == 0)
+                   focus = rangeStart-realStep*stepSize;
+                else if(direction == 1)
+                   focus = rangeStart+realStep*stepSize;
+                else if(direction == 2)
+                   focus = range.x+realStep*stepSize;
+                else if(direction == 3)
+                   focus = range.y+realStep*stepSize;
+                 
+                float dispersion = FocusLevel::evaluate(coords, focus);
+                if(!optimum.add(focus, dispersion))
+                {
+                    if(++wasMin > terminateIn)
+                        break;
+                }
+                else
+                    wasMin = 0;
+            }
+            return optimum.optimalFocus;
+        }
+       
         template<bool earlyTermination>
         __device__ float variableScan(float2 coords)
         {
             int steps = Constants::focusMethodParameter();
             float2 range = Constants::scanRange();
-            constexpr float SHRINK{0.95};
-            constexpr float GROW{1.5};
-            constexpr int THRESHOLD{6};
-            float stepSize{0.9f*Constants::scanRangeSize()/steps};
+            constexpr float SHRINK{0.9f};
+            constexpr float GROW{2.0f};
+            //constexpr int THRESHOLD{0};
+            const float INITIAL_STEP{Constants::scanRangeSize()/steps};
+            float stepSize{INITIAL_STEP};
             float focus{range.x};
             Optimum optimum;
 
-            int grows{0};           
- 
+            //int grows{0};           
             int wasMin{0};
-            int terminateIn{steps>>2}; 
+            int terminateIn{2}; 
             float previousDispersion{-1};
             while(focus < range.y)
             {
                 float dispersion = FocusLevel::evaluate(coords, focus);
-                if constexpr(earlyTermination)
-                {
-                    if(!optimum.add(focus, dispersion))
-                    {
-                        if(++wasMin > terminateIn)
-                            break;
-                    }
-                    else
-                        wasMin = 0;
-                }
-                else
-                    optimum.add(focus, dispersion);
+                    if(optimum.add(focus, dispersion))
+                        stepSize = INITIAL_STEP;
 
                 if(dispersion < previousDispersion)
                 {
-                    grows--;
-                    if(grows > THRESHOLD)
-                    {
-                        stepSize *= GROW;
-                        grows = 0;
-                    }
+                //    grows--;
+                //    if(grows < -THRESHOLD)
+                //    {
+                        stepSize *= SHRINK;
+                //        grows = 0;
+                //    }
+                    if constexpr(earlyTermination)
+                        if(++wasMin > terminateIn)
+                            break;
                 }
                 else
                 {
-                    grows++;
-                    if(grows < -THRESHOLD)
-                    {
-                        stepSize *= SHRINK;
-                        grows = 0;
-                    }
+                //    grows++;
+                //    if(grows > THRESHOLD)
+                //    {
+                        stepSize *= GROW;
+                //        grows = 0;
+                //    }
+                    if constexpr(earlyTermination)
+                        wasMin = 0; 
                 }
                 previousDispersion = dispersion; 
                 focus += stepSize;  
@@ -686,17 +718,21 @@ namespace Kernels
             for(int j=0; j<steps; j++) 
             {
                 float dispersion = FocusLevel::evaluate(coords, focus);
-                optimum.add(focus, dispersion);
+                if(!optimum.add(focus, dispersion))
+                    wasMin++;
+                else
+                    wasMin = 0;
                 focus += step;
             }
             steps = 2;
-            step *= 0.5f;
             while(true)
             {
+                step *=0.5f;
+                focus = range.x;
                 int stepsDoubled = steps*2;
                 for(int i=1; i<stepsDoubled; i+=2)
                 {
-                    focus = i*step; 
+                    focus += i*step; 
                     float dispersion = FocusLevel::evaluate(coords, focus);
                         if(!optimum.add(focus, dispersion))
                         {
@@ -707,7 +743,6 @@ namespace Kernels
                             wasMin = 0;
                 }
                 steps <<= 1;
-                step *=0.5f;
             }
         }
  
@@ -717,14 +752,15 @@ namespace Kernels
             int2 res = Constants::imgRes();
             unsigned int a =Constants::ClockSeed()+ coords.y*res.y*res.x +  coords.x*res.x; 
             curand_init(Constants::ClockSeed()+a,0, 0, &state);
-            float range = Constants::scanRangeSize();
+            float rangeSize = Constants::scanRangeSize();
+            float2 range = Constants::scanRange();
             Optimum optimum;
            
             int wasMin{0}; 
-            constexpr int TERMINATE_IN{5};
+            constexpr int TERMINATE_IN{3};
             while(true)
             {
-                float focus = range*curand_uniform(&state);
+                float focus = range.x+rangeSize*curand_uniform(&state);
                 float dispersion = FocusLevel::evaluate(coords, focus);
                 if(!optimum.add(focus, dispersion))
                 {
@@ -758,12 +794,12 @@ namespace Kernels
                 if(leftRightOptimum[0].minDispersion < leftRightOptimum[1].minDispersion)
                 {
                     divide = optimum.add(leftRightOptimum[0].optimalFocus, leftRightOptimum[0].minDispersion);
-                    dividedRange = {0, dividedRange.y*0.5f};
+                    dividedRange = {dividedRange.x, dividedRange.x+0.5f*(dividedRange.y-dividedRange.x)};
                 }
                 else
                 {
                     divide = optimum.add(leftRightOptimum[1].optimalFocus, leftRightOptimum[1].minDispersion);
-                    dividedRange = {dividedRange.y*0.5f, dividedRange.y};
+                    dividedRange = {dividedRange.y-0.5f*(dividedRange.y-dividedRange.x), dividedRange.y};
                 }
                 if(!divide)
                     break;
@@ -797,8 +833,12 @@ namespace Kernels
                 }
             }
             Optimum &minimal = optimum[0];
+            float2 range = Constants::scanRange();
             for(int i=1; i<DESCENT_START_POINTS; i++)
-                minimal = minOpt(minimal, optimum[i]);
+            {
+                if(optimum[i].optimalFocus >= range.x && optimum[i].optimalFocus <= range.y)
+                    minimal = minOpt(minimal, optimum[i]);
+            }
             return minimal.optimalFocus;
         }
         
@@ -848,15 +888,16 @@ namespace Kernels
             break;
            
             case BRUTE_FORCE_EARLY:
-                focus = Focusing::bruteForce<true>(coords);
+                //focus = Focusing::bruteForce<true>(coords);
+                focus = Focusing::bruteForceETTwoWay(coords);
             break;
             
             case VARIABLE_SCAN:
-                focus = Focusing::bruteForce<false>(coords);
+                focus = Focusing::variableScan<false>(coords);
             break;
            
             case VARIABLE_SCAN_EARLY:
-                focus = Focusing::bruteForce<true>(coords);
+                focus = Focusing::variableScan<true>(coords);
             break;
             
             case RANDOM:
@@ -1118,9 +1159,9 @@ namespace Kernels
             int id = coords.y*width+coords.x;
             uchar4 pixel = image[id];
             uchar4 yuv{0};
-            yuv.x = __float2int_rn( 0.256788f * pixel.x + 0.504129f * pixel.y + 0.097906f * pixel.z) +  16;
-            yuv.y = __float2int_rn(-0.148223f * pixel.x - 0.290993f * pixel.y + 0.439216f * pixel.z) + 128;
-            yuv.z = __float2int_rn( 0.439216f * pixel.x - 0.367788f * pixel.y - 0.071427f * pixel.z) + 128;
+            yuv.x = min(round( 0.256788f * pixel.x + 0.504129f * pixel.y + 0.097906f * pixel.z) +  16, 255.0f);
+            yuv.y = min(round(-0.148223f * pixel.x - 0.290993f * pixel.y + 0.439216f * pixel.z) + 128, 255.0f);
+            yuv.z = min(round( 0.439216f * pixel.x - 0.367788f * pixel.y - 0.071427f * pixel.z) + 128, 255.0f);
             yuv.w = pixel.w;
             image[id] = yuv;
         }
@@ -1138,9 +1179,9 @@ namespace Kernels
             int C = static_cast<int>(pixel.x) - 16;
             int D = static_cast<int>(pixel.y) - 128;
             int E = static_cast<int>(pixel.z) - 128;
-            rgb.x = __float2int_rn( 1.164383f * C + 1.596027f * E );
-            rgb.y = __float2int_rn( 1.164383f * C - (0.391762f * D) - (0.812968f * E ));
-            rgb.z = __float2int_rn( 1.164383f * C +  2.017232f * D );
+            rgb.x = min(round( 1.164383f * C + 1.596027f * E ), 255.0f);
+            rgb.y = min(round( 1.164383f * C - (0.391762f * D) - (0.812968f * E )),255.0f);
+            rgb.z = min(round( 1.164383f * C +  2.017232f * D ), 255.0f);
             rgb.w = pixel.w;
             image[id] = rgb;
         }

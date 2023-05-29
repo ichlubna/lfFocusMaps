@@ -13,11 +13,11 @@ class Renamer:
 
     def printHelpAndExit(self):
         print("This script renames arbitrary input lightfield files into the desired format.")
-        print("Run as: python renameLFImages inputPath outputPath directionX directionY gridWidth gridHeight split")
+        print("Run as: python renameLFImages inputPath outputPath directionX directionY gridWidth gridHeight rowMajor split")
         print("inputPath and outputPath - paths to the existing directories")
         print("directionX and directionY - how is LF captured - directionX = 0 means left to right, directionY = 0 means top to bottom and 1 the other way")
-        print("rowMajor - 1 means that LF was captured row by row, 0 column by column")
         print("gridWidth and gridHeight - number of images in the grid in X and Y axis")
+        print("rowMajor - 0 means that LF will be saved row by row, 1 column by column")
         print("split - if set to 1 splits the data into two datasets for measurement with reference middle images, e.g. splits 15x15 grid to 8x8 and rest between images")
         exit(0)
 

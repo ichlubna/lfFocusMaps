@@ -228,6 +228,8 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     float2 pixelSize{1.0f/resolution.x, 1.0f/resolution.y}; 
     floatValues[FloatConstantIDs::PX_SIZE_X] = pixelSize.x;
     floatValues[FloatConstantIDs::PX_SIZE_Y] = pixelSize.y;
+    floatValues[FloatConstantIDs::PX_SIZE_X_HALF] = pixelSize.x/2.0f;
+    floatValues[FloatConstantIDs::PX_SIZE_Y_HALF] = pixelSize.y/2.0f;
     cudaMemcpyToSymbol(Kernels::Constants::floatConstants, floatValues.data(), floatValues.size() * sizeof(float));
 
     std::vector<void*> dataPointers(DataPointersIDs::POINTERS_COUNT);
@@ -250,7 +252,7 @@ void Interpolator::loadGPUConstants(InterpolationParams params)
     for(int i=0; i<HIERARCHY_DIVISIONS; i++)
     {
         hierarchySamplings[i] = currentSampling;
-        hierarchySteps[i] = params.scanRange.x+currentRange/currentSampling;
+        hierarchySteps[i] = currentRange/currentSampling;
         currentSampling /= 2;
         currentRange /= 2;
     }
