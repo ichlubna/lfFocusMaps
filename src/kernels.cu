@@ -832,9 +832,10 @@ namespace Kernels
                         break;
                 }
             }
-            Optimum &minimal = optimum[0];
             float2 range = Constants::scanRange();
-            for(int i=1; i<DESCENT_START_POINTS; i++)
+            Optimum minimal;
+            minimal.optimalFocus = range.x;
+            for(int i=0; i<DESCENT_START_POINTS; i++)
             {
                 if(optimum[i].optimalFocus >= range.x && optimum[i].optimalFocus <= range.y)
                     minimal = minOpt(minimal, optimum[i]);

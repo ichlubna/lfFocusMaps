@@ -20,7 +20,7 @@ int main(int argc, char **argv)
                           "     HIER (hierarchichal sampling)\n"
                           "     DESC (3-way descent)\n"
                           "     PYR (pyramid approach) - The first phase samples downscaled images that need to be stored in folder\n"
-                          "     named the same as input folder with same filenames\n"
+                          "     named the same as input folder with suffix _down and same filenames\n"
                           "     e.g.: -i my/folder => my contains folder and folder_down\n"
                           "-p - method parameter\n"
                           "-e - scan metric to evaluate the color dispersion:\n"

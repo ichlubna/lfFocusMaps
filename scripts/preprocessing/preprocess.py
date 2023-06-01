@@ -100,7 +100,6 @@ def highlight(img):
 def preprocess(inputDir, outputDir, method):
     files = sorted(os.listdir(inputDir))
     for file in files:
-        print(".")
         inputFile = os.path.join(inputDir, file)
         outputFile = os.path.join(outputDir, file)
         img = cv2.imread(inputFile)
