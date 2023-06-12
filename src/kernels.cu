@@ -713,7 +713,7 @@ namespace Kernels
             Optimum optimum;
             
             int wasMin{0};
-            int terminateIn{5};
+            int terminateIn{2};
 
             for(int j=0; j<steps; j++) 
             {
@@ -808,12 +808,51 @@ namespace Kernels
         }
         
         __device__ float descent(float2 coords)
-        {
+        {  
             constexpr int MAX_STEPS{100};
             Optimum optimum[DESCENT_START_POINTS];
-            constexpr float LEARN_RATE{0.1f};
-            constexpr float MIN_STEP{0.5f};
-            
+            float maxDispersion = 0;
+            PixelArray a(float4{0,0,0,0});
+            PixelArray b(float4{1.0f,1.0f,1.0f,1.0f});
+            switch (Constants::scanMetric())
+            {
+                case ScanMetric::VARIANCE:
+                {
+                    ScanMetrics::OnlineVariance d;
+                    d.add(a);
+                    d.add(b);
+                    maxDispersion = d.dispersionAmount(); 
+                }
+                break;
+                case ScanMetric::ELEMENT_RANGE:
+                {
+                    ScanMetrics::ElementRange d;
+                    d.add(a);
+                    d.add(b);
+                    maxDispersion = d.dispersionAmount(); 
+                }
+                break;
+                case ScanMetric::RANGE:
+                {
+                    ScanMetrics::Range d;
+                    d.add(a);
+                    d.add(b);
+                    maxDispersion = d.dispersionAmount(); 
+                }
+                break;
+                case ScanMetric::MAD:
+                {
+                    ScanMetrics::Mad d;
+                    d.add(a);
+                    d.add(b);
+                    maxDispersion = d.dispersionAmount(); 
+                }
+                break;
+
+            }
+
+            const float LEARN_RATE{2.0f/maxDispersion};
+            const float MIN_STEP{0.05f*Constants::scanRangeSize()};
             for(int p=0; p<DESCENT_START_POINTS; p++)
             {
                 float focus = Constants::descentStartPoints[p];
@@ -826,10 +865,11 @@ namespace Kernels
                         optimum[p].addForce(focusPair.x, dispersionPair.x);
                     else
                         optimum[p].addForce(focusPair.y, dispersionPair.y);
-                    step = LEARN_RATE*fabsf(focus-optimum[p].optimalFocus);
+                    step = step*LEARN_RATE*optimum[p].minDispersion;
                     focus = optimum[p].optimalFocus;
                     if(step < MIN_STEP)
                         break;
+                    //printf("a");
                 }
             }
             float2 range = Constants::scanRange();
@@ -955,7 +995,7 @@ namespace Kernels
 
         __device__ float nearestNeighborLoad(int2 coords, cudaSurfaceObject_t input)
         {
-            constexpr int HALF_KERNEL_SIZE{5};
+            constexpr int HALF_KERNEL_SIZE{1};
             constexpr int KERNEL_SIZE{HALF_KERNEL_SIZE*2+1};
             constexpr int MEDIAN_SIZE{KERNEL_SIZE*KERNEL_SIZE};
 
@@ -977,7 +1017,7 @@ namespace Kernels
         }
         __device__ float medianLoad(int2 coords, cudaSurfaceObject_t input)
         {
-            constexpr int HALF_KERNEL_SIZE{1};
+            constexpr int HALF_KERNEL_SIZE{5};
             constexpr int KERNEL_SIZE{HALF_KERNEL_SIZE*2+1};
             constexpr int MEDIAN_SIZE{KERNEL_SIZE*KERNEL_SIZE};
             constexpr int MEDIAN_ID{MEDIAN_SIZE/2+1};
@@ -1020,7 +1060,7 @@ namespace Kernels
 
         __device__ float kuwaharaLoad(int2 coords, cudaSurfaceObject_t input)
         {
-            constexpr int HALF_KERNEL_SIZE{4};
+            constexpr int HALF_KERNEL_SIZE{11};
             constexpr int QUADRANT_SIZE{HALF_KERNEL_SIZE+1};
             constexpr int QUADRANT_COUNT{QUADRANT_SIZE*QUADRANT_SIZE};
             Statistic<QUADRANT_COUNT> statistic;

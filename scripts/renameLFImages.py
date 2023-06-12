@@ -10,19 +10,21 @@ class Renamer:
     inputGrid = [0,0]
     split = True
     rowMajor = True
+    nthRef = 1
 
     def printHelpAndExit(self):
         print("This script renames arbitrary input lightfield files into the desired format.")
-        print("Run as: python renameLFImages inputPath outputPath directionX directionY gridWidth gridHeight rowMajor split")
+        print("Run as: python renameLFImages inputPath outputPath directionX directionY gridWidth gridHeight rowMajor split nthRef")
         print("inputPath and outputPath - paths to the existing directories")
         print("directionX and directionY - how is LF captured - directionX = 0 means left to right, directionY = 0 means top to bottom and 1 the other way")
         print("gridWidth and gridHeight - number of images in the grid in X and Y axis")
         print("rowMajor - 0 means that LF will be saved row by row, 1 column by column")
         print("split - if set to 1 splits the data into two datasets for measurement with reference middle images, e.g. splits 15x15 grid to 8x8 and rest between images")
+        print("nthRef - stores only every nth reference frame, e.g. when set to 1, all reference frames are stored")
         exit(0)
 
     def checkArgs(self):
-        ARGS_NUM = 8
+        ARGS_NUM = 9
         if len(sys.argv) < ARGS_NUM+1  or sys.argv[1] == "-h" or sys.argv[1] == "--help":
             self.printHelpAndExit()
         self.inputPath = sys.argv[1]
@@ -33,6 +35,7 @@ class Renamer:
         self.inputGrid[1] = int(sys.argv[6])
         self.rowMajor = int(sys.argv[7]) == 1
         self.split = int(sys.argv[8]) == 1
+        self.nthRef = int(sys.argv[9])
 
     def getCoords(self, imgID):
         inputCol = imgID % self.inputGrid[0]
@@ -70,8 +73,9 @@ class Renamer:
            outFile = os.path.join(outFile, name)
            shutil.copyfile(inFile, outFile)
            imgID += 1
-    
+
     def convertSplit(self):
+        nthCounter = 0
         files = sorted(os.listdir(self.inputPath))
         imgID = 0
         data = os.path.join(self.outputPath, "data")
@@ -97,7 +101,9 @@ class Renamer:
                outFile = os.path.join(data, name)
            else:
                outFile = os.path.join(reference, name)
-           shutil.copyfile(inFile, outFile)
+               nthCounter += 1
+           if isData or ((nthCounter % self.nthRef) == 0):
+               shutil.copyfile(inFile, outFile)
            imgID += 1
 
     def run(self):
