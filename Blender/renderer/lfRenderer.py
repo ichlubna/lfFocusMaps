@@ -27,6 +27,9 @@ def setMaterialValues(context, nodeName, value):
 def updateFocus(self, context):
     setMaterialValues(context, "Focus", context.scene.LFFocus)
 
+def updateGridAspect(self, context):
+    setMaterialValues(context, "Grid aspect", context.scene.LFGridAspect)
+
 class LFReader:
     cols = 0
     rows = 0
@@ -70,12 +73,15 @@ class LFPanel(bpy.types.Panel):
     def draw(self, context):
         col = self.layout.column(align=True)
         col.prop(context.scene, "LFInput")
+        col.prop(context.scene, "LFGridAspect")
         col.prop(context.scene, "LFViewMethod")
         if context.scene.LFViewMethod == "FIXED":
             col.prop(context.scene, "LFViewCoords")
         col.prop(context.scene, "LFSynthesisMethod")
         if context.scene.LFSynthesisMethod == "ONE":
             col.prop(context.scene, "LFFocus")
+        else:
+            col.prop(context.scene, "LFFocusRange")
         if bpy.context.scene.camera == None:
             col.label(text="No active camera found!")
         else:
@@ -107,28 +113,24 @@ class LFGenerator(bpy.types.Operator):
         CHANNELS = 4
         
         self.setMaterialAspectAndGridSize(context, resolution[0]/resolution[1], colsRows)
-        return
 
         grid = bpy.data.images.new("Lightfield", width=colsRows[0]*resolution[0], height=colsRows[1]*resolution[1])
         gridArray = np.empty((colsRows[0], colsRows[1], resolution[0], resolution[1], CHANNELS), np.float32)
-        print(gridArray.shape)
         imageSize = resolution[0]*resolution[1]*CHANNELS
         for col in range(colsRows[0]):
             for row in range(colsRows[1]):                
                 image = lf.getImage(col, row)
-                index = imageSize*col*row       
                 gridArray[col][row] = np.reshape(np.asarray(image.pixels), (resolution[0], resolution[1], CHANNELS))
-                #gridArray[index:index+imageSize] = image.pixels
-                #bpy.data.images.remove(image)
-                print(str(col)+" "+str(row))
-                #result = gridArray.reshape(resolution[0]*colsRows[0], resolution[1]*colsRows[1], CHANNELS)
-                if col > 0 or row > 0:
-                    result = np.swapaxes(gridArray,1,2).reshape(resolution[0]*colsRows[0], resolution[1]*colsRows[1], CHANNELS)
-                    grid.pixels.foreach_set(result.ravel())
-                    #grid.pixels.foreach_set(gridArray.ravel())
-                    return
-        grid.pixels.foreach_set(gridArray.ravel())
+        result = gridArray.reshape((colsRows[1], colsRows[0], resolution[1], resolution[0]*CHANNELS))
+        result = result.swapaxes(1,2)
+        result = result.reshape(resolution[1]*colsRows[1], resolution[0]*colsRows[0]*CHANNELS)
+        grid.pixels.foreach_set(result.ravel())
         grid.update()
+        
+        for col in range(colsRows[0]):
+            for row in range(colsRows[1]):                
+                image = lf.getImage(col, row)
+                bpy.data.images.remove(image)
     
     def importMaterial(self, context):
         if not materialName in bpy.data.materials:
@@ -164,8 +166,9 @@ def register():
     bpy.types.Scene.LFViewMethod = bpy.props.EnumProperty(name="View", items=[("FREE", "Free", "The view changes according to the viewing angle in viewport.", 0), ("FIXED", "Fixed", "The view is fixed at the defined coordinates.", 1)])
     bpy.types.Scene.LFSynthesisMethod = bpy.props.EnumProperty(name="Focusing", items=[("ALL", "All-focused", "The scene is focused everywhere.", 0), ("ONE", "One-distance", "The focusing can be manually adjusted.", 1)])
     bpy.types.Scene.LFViewCoords = bpy.props.FloatVectorProperty(name="View coordinates", size=2, description="Normalized view coordinates", default=(0.5,0.5), min=0, max=1)
+    bpy.types.Scene.LFFocusRange = bpy.props.FloatVectorProperty(name="Focus range", size=2, description="Starting and ending focusing range", default=(0.0,0.5))
     bpy.types.Scene.LFFocus = bpy.props.FloatProperty(name="Focus", description="The focusing distance.", update=updateFocus)
-    bpy.types.Scene.LFGridAspect = bpy.props.FloatProperty(name="Grid ratio", description="The aspect ratio of the spacing between the capturing cameras.", default=1)
+    bpy.types.Scene.LFGridAspect = bpy.props.FloatProperty(name="Grid ratio", description="The aspect ratio of the spacing between the capturing cameras.", default=1, update=updateGridAspect)
        
 def unregister():
     bpy.utils.unregister_class(LFGenerator)
