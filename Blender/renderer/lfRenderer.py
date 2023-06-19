@@ -29,6 +29,12 @@ def updateFocus(self, context):
 
 def updateGridAspect(self, context):
     setMaterialValues(context, "Grid aspect", context.scene.LFGridAspect)
+    
+def updateQuilt(self, context, texture):
+    group = bpy.data.node_groups["SamplingGroup"]
+    for n in group.nodes:
+        if n.label == "Texture":
+            n.image = texture
 
 class LFReader:
     cols = 0
@@ -82,7 +88,10 @@ class LFPanel(bpy.types.Panel):
             col.prop(context.scene, "LFFocus")
         else:
             col.prop(context.scene, "LFFocusRange")
-        if bpy.context.scene.camera == None:
+        
+        if  context.scene.LFInput == "":
+            col.label(text="No input directory!")
+        elif bpy.context.scene.camera == None:
             col.label(text="No active camera found!")
         else:
             col.operator("lf.generate", text="Generate")
@@ -115,17 +124,19 @@ class LFGenerator(bpy.types.Operator):
         self.setMaterialAspectAndGridSize(context, resolution[0]/resolution[1], colsRows)
 
         grid = bpy.data.images.new("Lightfield", width=colsRows[0]*resolution[0], height=colsRows[1]*resolution[1])
-        gridArray = np.empty((colsRows[0], colsRows[1], resolution[0], resolution[1], CHANNELS), np.float32)
+        gridArray = np.empty((colsRows[0]*resolution[0]*colsRows[1]*resolution[1]*CHANNELS), np.float32)
         imageSize = resolution[0]*resolution[1]*CHANNELS
         for col in range(colsRows[0]):
             for row in range(colsRows[1]):                
                 image = lf.getImage(col, row)
-                gridArray[col][row] = np.reshape(np.asarray(image.pixels), (resolution[0], resolution[1], CHANNELS))
+                index = imageSize*((colsRows[1]-1-row)*colsRows[0]+col)
+                gridArray[index:index+imageSize] = image.pixels
         result = gridArray.reshape((colsRows[1], colsRows[0], resolution[1], resolution[0]*CHANNELS))
         result = result.swapaxes(1,2)
         result = result.reshape(resolution[1]*colsRows[1], resolution[0]*colsRows[0]*CHANNELS)
         grid.pixels.foreach_set(result.ravel())
         grid.update()
+        updateQuilt(self, context, grid)
         
         for col in range(colsRows[0]):
             for row in range(colsRows[1]):                
