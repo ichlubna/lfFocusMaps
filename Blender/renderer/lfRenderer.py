@@ -30,11 +30,53 @@ def updateFocus(self, context):
 def updateGridAspect(self, context):
     setMaterialValues(context, "Grid aspect", context.scene.LFGridAspect)
     
+def updateFixedCoordinates(self, context):
+    setMaterialValues(context, "Fixed coordinates X", context.scene.LFViewCoords[0])
+    setMaterialValues(context, "Fixed coordinates Y", context.scene.LFViewCoords[1])
+    
+def updateFocusRange(self, context):
+    setMaterialValues(context, "Focus range start", context.scene.LFFocusRange[0])
+    setMaterialValues(context, "Focus range end", context.scene.LFFocusRange[1])
+    
 def updateQuilt(self, context, texture):
     group = bpy.data.node_groups["SamplingGroup"]
     for n in group.nodes:
         if n.label == "Texture":
             n.image = texture
+            
+def relinkNodes(context, targetNodeLabel, targetNodeSocketLabel, sourceNodeLabel):
+    material = bpy.data.materials[materialName]
+    targetNode = None
+    sourceNode = None
+    for n in material.node_tree.nodes:
+        if n.label == targetNodeLabel:
+            targetNode = n
+        if n.label == sourceNodeLabel:
+            sourceNode = n
+    targetSocket = None
+    sourceSocket = None
+    for s in targetNode.inputs:
+        if s.name == targetNodeSocketLabel:
+            targetSocket = s
+    sourceSocket = sourceNode.outputs[0]
+    if len(targetSocket.links) > 0:
+        link = targetSocket.links[0]
+        material.node_tree.links.remove(link)
+    material.node_tree.links.new(sourceSocket, targetSocket)
+    
+def updateFocusMethod(self, context):
+    if context.scene.LFSynthesisMethod == "ALL":
+        relinkNodes(context, "One distance synthesis", "Focus", "Focusing")
+    elif context.scene.LFSynthesisMethod == "ONE":
+        relinkNodes(context, "One distance synthesis", "Focus", "Focus")
+
+def updateViewMethod(self, context):
+    if context.scene.LFViewMethod == "FIXED":
+        relinkNodes(context, "One distance synthesis", "Novel view coords", "Fixed coordinates")
+        relinkNodes(context, "Focusing", "Novel view coords", "Fixed coordinates")
+    elif context.scene.LFViewMethod == "FREE":
+        relinkNodes(context, "One distance synthesis", "Novel view coords", "Free look")   
+        relinkNodes(context, "Focusing", "Novel view coords", "Free look")
 
 class LFReader:
     cols = 0
@@ -174,11 +216,11 @@ def register():
     bpy.utils.register_class(LFGenerator)
     bpy.utils.register_class(LFPanel)
     bpy.types.Scene.LFInput = bpy.props.StringProperty(name="Input", subtype="FILE_PATH", description="The path to the input views in format cols_rows.ext", default="")
-    bpy.types.Scene.LFViewMethod = bpy.props.EnumProperty(name="View", items=[("FREE", "Free", "The view changes according to the viewing angle in viewport.", 0), ("FIXED", "Fixed", "The view is fixed at the defined coordinates.", 1)])
-    bpy.types.Scene.LFSynthesisMethod = bpy.props.EnumProperty(name="Focusing", items=[("ALL", "All-focused", "The scene is focused everywhere.", 0), ("ONE", "One-distance", "The focusing can be manually adjusted.", 1)])
-    bpy.types.Scene.LFViewCoords = bpy.props.FloatVectorProperty(name="View coordinates", size=2, description="Normalized view coordinates", default=(0.5,0.5), min=0, max=1)
-    bpy.types.Scene.LFFocusRange = bpy.props.FloatVectorProperty(name="Focus range", size=2, description="Starting and ending focusing range", default=(0.0,0.5))
-    bpy.types.Scene.LFFocus = bpy.props.FloatProperty(name="Focus", description="The focusing distance.", update=updateFocus)
+    bpy.types.Scene.LFViewMethod = bpy.props.EnumProperty(name="View", items=[("FREE", "Free", "The view changes according to the viewing angle in viewport.", 0), ("FIXED", "Fixed", "The view is fixed at the defined coordinates.", 1)], update=updateViewMethod)
+    bpy.types.Scene.LFSynthesisMethod = bpy.props.EnumProperty(name="Focusing", items=[("ALL", "All-focused", "The scene is focused everywhere.", 0), ("ONE", "One-distance", "The focusing can be manually adjusted.", 1)], update=updateFocusMethod)
+    bpy.types.Scene.LFViewCoords = bpy.props.FloatVectorProperty(name="View coordinates", size=2, description="Normalized view coordinates", default=(0.5,0.5), min=0, max=1, update=updateFixedCoordinates)
+    bpy.types.Scene.LFFocusRange = bpy.props.FloatVectorProperty(name="Focus range", size=2, description="Starting and ending focusing range", default=(0.0,0.5), update=updateFocusRange)
+    bpy.types.Scene.LFFocus = bpy.props.FloatProperty(name="Focus", description="The focusing distance.", update=updateFocus, default=0, step=0.001)
     bpy.types.Scene.LFGridAspect = bpy.props.FloatProperty(name="Grid ratio", description="The aspect ratio of the spacing between the capturing cameras.", default=1, update=updateGridAspect)
        
 def unregister():
