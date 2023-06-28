@@ -2,7 +2,9 @@ This repository contains tools for light field rendering using the focus map. Th
 
 # Content
 *src* - contains the source codes for the CUDA-based focus map generator and novel view renderer main application (use *CMakeLists.txt* to build and *-h* argument for correct usage instructions)
+
 *Blender* - contains a simplified light field renderer addon and optimal capturing addon for synthetic scenes (this addon was used to produce the dataset used with the main application)
+
 *scripts* - contains several scripts for measurements of the results produced by the main application
 
 # Installation of Blender addons
