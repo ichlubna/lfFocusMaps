@@ -3,10 +3,16 @@ import sys
 import os
 import math
 import cv2
+import random
 import cython
 
 def resize(img, amount):
     return cv2.resize(img, (int(img.shape[1]*amount), int(img.shape[0]*amount)), interpolation=cv2.INTER_AREA)
+
+def brightNoise(img):
+    alpha = 1+0.5*(random.random()-0.5)
+    beta = 1+0.5*(random.random()-0.5)
+    return cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
 
 def contrast(img, amount):
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
@@ -108,8 +114,9 @@ def preprocess(inputDir, outputDir, method):
             result = resize(img, 0.125);
         elif method == "RESIZE_QUARTER":
             result = resize(img, 0.25)
-        elif method == "GAUSSIAN_LIGHT":
-            result = gaussian(img, 9)
+        elif method == "GAUSSIAN_LIGHT_HALF":
+            result = gaussian(img, 5)
+            result = resize(result, 0.5)
         elif method == "GAUSSIAN_HEAVY":
             result = gaussian(img, 19)
         elif method == "GAUSSIAN_ULTRA_HEAVY":
@@ -134,6 +141,12 @@ def preprocess(inputDir, outputDir, method):
             result = bilateral(img)
         elif method == "HIGHLIGHT":
             result = highlight(img)
+        elif method == "BRIGHT_NOISE":
+            result = brightNoise(img)
+        elif method == "CHAIN":
+            result = denoise(img)
+            result = sine(img, 1)
+            result = highlight(result)
         else:
             raise Exception("The requested method is not available.")
         cv2.imwrite(outputFile, result)

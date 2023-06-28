@@ -70,18 +70,23 @@ class Comparison:
 def run(inputDir, referenceDir, inputRange, gridWidth, gridHeight, gridAspect):
     scanMethods = [ ("BF", 32),\
                     ("BFET", 32),\
-                    ("VS", 32), ("VSET", 32),\
-                    ("RAND", 0), ("TD", 0),\
-                    ("HIER", 0), ("DESC", 0),\
-                    ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0), ("PYR", 0) ]
+                    ("VS", 32),\
+                    ("VSET", 32),\
+                    ("RAND", 0),\
+                    ("TD", 0),\
+                    ("HIER", 0),\
+                    ("DESC", 0),\
+                    ("PYR", 0) ]
     scanMetrics = [ "VAR", "ERANGE", "RANGE", "MAD" ]
     addressModes = [ "WRAP", "CLAMP", "MIRROR", "BORDER", "BLEND", "ALTER" ]
-    preprocesses = [ "NONE", "CONTRAST", "EDGE", "SHARPEN", "EQUAL", "SINE_FAST", "SINE_SLOW", "DENOISE", "MEDIAN", "BILATERAL", "HIGHLIGHT"]
-    pyramidPreprocess = [ "RESIZE_QUARTER", "RESIZE_EIGHTH", "GAUSSIAN_ULTRA_HEAVY", "GAUSSIAN_HEAVY", "GAUSSIAN_LIGHT"]
-    filters = [ "MED", "SNN", "KUW" ]
-    distanceOrders = [ 1, 2, 3, 4 ]
-    scanSpaces = [ 0.5, 1, 1.5, 2 ]
-    blockSizes = [ 0, 1, 2, 5, 10 ]
+    preprocesses = ["NONE"]#["CONTRAST", "EDGE", "SHARPEN", "EQUAL", "SINE_FAST", "SINE_SLOW", "DENOISE", "MEDIAN", "BILATERAL", "HIGHLIGHT"]
+    #pyramidPreprocess = [ "RESIZE_QUARTER", "RESIZE_EIGHTH", "GAUSSIAN_ULTRA_HEAVY", "GAUSSIAN_HEAVY", "GAUSSIAN_LIGHT"]
+    pyramidPreprocess = [ "GAUSSIAN_LIGHT_HALF"]
+    filters = ["MED", "KUW", "SNN" ]
+    distanceOrders = [ 1 ]
+    scanSpaces = [ 1 ]
+    blockSizes = [ 5 ]
+    colorDistances = [ "RGB", "YUV", "Y", "YUVw"]
 
     workspace = tempfile.mkdtemp()
     inputPath = os.path.join(workspace, "input")
@@ -91,11 +96,13 @@ def run(inputDir, referenceDir, inputRange, gridWidth, gridHeight, gridAspect):
     resultsPath = os.path.join(workspace, "results")
     shutil.rmtree(resultsPath, ignore_errors=True)
     os.mkdir(resultsPath)
+    os.mkdir(secondaryPath)
+    os.mkdir(downPath)
     filteredResultName = os.path.join(resultsPath, "renderImagePostFiltered.png")
     rawResultName = os.path.join(resultsPath, "renderImage.png")
 
-    pyramidID = 0
     useSecondary = False
+    total = 0
     for preprocess in preprocesses:
         if preprocess ==  "NONE":
             useSecondary = False
@@ -105,9 +112,8 @@ def run(inputDir, referenceDir, inputRange, gridWidth, gridHeight, gridAspect):
         for scanMethod in scanMethods:
             pyramidMode = ""
             if str(scanMethod[0]) == "PYR":
-                pyramidMode = pyramidPreprocess[pyramidID]
+                pyramidMode = pyramidPreprocess[scanMethod[1]]
                 prepr.preprocess(inputDir, downPath, pyramidMode)
-                pyramidID +=1
             for addressMode in addressModes:
                 for scanSpace in scanSpaces:
                     for scanMetric in scanMetrics:
@@ -115,7 +121,8 @@ def run(inputDir, referenceDir, inputRange, gridWidth, gridHeight, gridAspect):
                             for blockSize in blockSizes:
                                 for mapFilter in filters:
                                     for fast in [True, False]:
-                                        for colorDist in ["RGB", "YUV", "Y", "YUVw"]:
+                                        for colorDist in colorDistances:
+                                            total+=1
                                             references = os.listdir(referenceDir)
                                             fastMode = "fast" if fast else "full"
                                             if pyramidMode != "":
@@ -172,6 +179,7 @@ def run(inputDir, referenceDir, inputRange, gridWidth, gridHeight, gridAspect):
                                                     "ssim: " + str(filteredComparison.ssim()) + "\n"   +\
                                                     "vmaf: " + str(filteredComparison.vmaf()) + "\n")
     shutil.rmtree(workspace)
+    print("Total number of measurements:" + str(total))
 try:
     if len(sys.argv) != 7 or sys.argv[1] == "-h" or sys.argv[1] == "--help":
         print("Provide arguments for input light field, directory with reference images named x_y, focus range start_end, grid width and height: python measure.py ./path/input ./path/reference min_max W H gridAspect")
