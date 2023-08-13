@@ -48,6 +48,8 @@ Interpolator::~Interpolator()
 void Interpolator::init()
 {
     loadGPUData();
+    if(inputCamerasSpacingAspect == 0)
+        inputCamerasSpacingAspect = 1;
     sharedSize = 0;//sizeof(half)*colsRows.x*colsRows.y;
 }
 
