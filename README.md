@@ -13,5 +13,17 @@ Pack the *.py* and *.blend* files in the addon directory into a zip file. Open B
 # Citation
 Please cite our work if you find this repository useful:
 ```
-TBD
+@ARTICLE{Chlubna2024,
+   author = "Tom\'{a}\v{s} Chlubna and Tom\'{a}\v{s} Milet and Pavel Zem\v{c}\'{i}k",
+   title = "Lightweight All-Focused Light Field Rendering",
+   pages = "7--8",
+   journal = "Computer Vision and Image Understanding",
+   volume = 244,
+   number = 7,
+   year = 2024,
+   ISSN = "1077-3142",
+   doi = "10.1016/j.cviu.2024.104031",
+   language = "english",
+   url = "https://www.fit.vut.cz/research/publication/13204"
+}
 ```
