@@ -1,4 +1,4 @@
-This repository contains tools for light field rendering using the focus map. The implementation was used in *Lightweight All-Focused Light Field Renderingg* paper. Visit the [research page](https://www.fit.vutbr.cz/~ichlubna/lf) for more details and the dataset.
+This repository contains tools for light field rendering using the focus map. The implementation was used in *Lightweight All-Focused Light Field Rendering* paper. Visit the [research page](https://www.fit.vutbr.cz/~ichlubna/lf) for more details and the dataset.
 
 # Content
 *src* - contains the source codes for the CUDA-based focus map generator and novel view renderer main application (use *CMakeLists.txt* to build and *-h* argument for correct usage instructions)
