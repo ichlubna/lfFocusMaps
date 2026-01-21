@@ -1,13 +1,32 @@
-@ARTICLE{Chlubna2024,
-   author = "Tom\'{a}\v{s} Chlubna and Tom\'{a}\v{s} Milet and Pavel Zem\v{c}\'{i}k",
-   title = "Lightweight All-Focused Light Field Rendering",
-   pages = "7--8",
-   journal = "Computer Vision and Image Understanding",
-   volume = 244,
-   number = 7,
-   year = 2024,
-   ISSN = "1077-3142",
-   doi = "10.1016/j.cviu.2024.104031",
-   language = "english",
-   url = "https://www.fit.vut.cz/research/publication/13204"
-}
+cff-version: "1.2.0"
+authors:
+- family-names: Chlubna
+  given-names: Tomáš
+- family-names: Milet
+  given-names: Tomáš
+- family-names: Zemčík
+  given-names: Pavel
+doi: 10.1016/j.cviu.2024.104031
+message: If you use this software, please cite our article in the journal Computer Vision and Image Understanding.
+preferred-citation:
+  authors:
+  - family-names: Chlubna
+    given-names: Tomáš
+  - family-names: Milet
+    given-names: Tomáš
+  - family-names: Zemčík
+    given-names: Pavel
+  date-published: 2024
+  doi: 10.1016/j.cviu.2024.104031
+  issn: 1077-3142
+  issue: 7
+  journal: Computer Vision and Image Understanding
+  publisher:
+    name: Elsevier
+  start: 7
+  end: 8
+  title: "Lightweight All-Focused Light Field Rendering"
+  type: article
+  url: "https://www.fit.vut.cz/research/publication/13204"
+  volume: 244
+title: "Lightweight All-Focused Light Field Rendering"
